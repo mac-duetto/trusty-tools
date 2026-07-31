@@ -379,7 +379,8 @@ tart run --no-graphics vmtest-<runid> &
 provision.sh                               # measured ~30s
 <scenario>                                 # install-local | install-branch | install-released
 verify.sh                                  # §7
-wait_for_stopped()                         # NOT a bare `tart stop` — §8.1
+vm_request_stop()                          # guest `sync; sync`, then `tart stop`, status DISCARDED
+vm_wait_for_stopped()                      # poll — NOT a bare `tart stop` — §8.1
 tart delete vmtest-<runid>
 ```
 
