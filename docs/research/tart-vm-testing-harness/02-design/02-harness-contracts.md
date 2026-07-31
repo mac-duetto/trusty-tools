@@ -1561,6 +1561,35 @@ mechanism, and this document does not specify mechanisms it cannot ground.
 | `install_from_path <vm_name> <guest_dir> <crate_dir>` | asserts `rustc --version` first per DOC-1 §8.4, then `cargo install --path`; 0 or dies 50 |
 | `install_from_registry <vm_name> <package> [version]` | `cargo install <package> --locked` (DOC-1 §6.3); 0 or dies 50 |
 
+**Rule: both install functions install at *package* granularity — never `--bin`.**
+*(Amended 2026-07-31.)* `install_from_path` and `install_from_registry` install a
+**package**. Neither may pass `--bin`, and neither may pass `--bins` with a
+filter. Until this amendment the only thing standing in the way was the
+three-argument arity of `install_from_path` above — an accident of a signature,
+not a stated rule, and not something a reader could be expected to read as a
+prohibition.
+
+**Why the rule is needed, and why it is the sharper hazard.** `cargo install
+--path <dir>` has no per-binary granularity *unless* `--bin` is passed, so the
+specified form is already correct. But §9.3's table carries a `binary` column on
+**every** row, which makes a "row-faithful" install loop — `cargo install --path
+<dir> --bin <binary>` — look like tidying-up rather than a change in meaning. It
+is a change in meaning. The `binary` column is the **oracle's** input; it is
+never the **installer's**.
+
+DOC-1 §7.4's Single-Install Convention gate asserts exactly one thing: that **one
+package-granular install yields every sidecar**. A per-binary install loop targets
+each sidecar directly, so `verify_binaries` reports N/N present and every
+`verify_single_install` call passes — while proving nothing at all about the
+convention. A crate that silently stopped shipping a sidecar would still show
+green, because the harness would have installed that sidecar by name. This is
+precisely the failure DOC-1 §7.4 names — an omission is "not a weaker assertion,
+it is *no* assertion, and it fails silently and permanently"
+([`01-vm-install-harness.md:635-637`](./01-vm-install-harness.md)) — reached here
+by a different route: not a missing row, but an install that answers the row
+instead of being tested by it. `--check-table` cannot catch this one, because the
+table is not what is wrong.
+
 > **Naming tension, recorded.** DOC-1 §3.4 describes `source.sh` as owning "source
 > delivery", but DOC-1 §12.1 requires reusable **install-step** functions so an
 > upgrade scenario can be two install steps in one file. Putting

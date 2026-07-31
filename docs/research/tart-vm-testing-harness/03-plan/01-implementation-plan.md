@@ -992,6 +992,15 @@ measurement.
     exactly why DOC-1 requires it adjacent to the build rather than once at
     provisioning time. A failed `cd` must not run the command in the wrong
     directory.
+  - **Install the package, never the binary — no `--bin`, no filtered `--bins`**
+    (DOC-2 §12.2, amended 2026-07-31). The TSV's `binary` column is the
+    **oracle's** input, not the installer's; do not make the loop "row-faithful"
+    by installing each row's binary by name. DOC-1 §7.4's gate asserts that *one*
+    package-granular install yields *every* sidecar, so a per-binary install
+    satisfies `verify_binaries` and every `verify_single_install` call while
+    proving nothing — and a crate that stopped shipping a sidecar would still show
+    green. Unlike a missing table row, `--check-table` cannot catch this, because
+    the table is not what would be wrong.
   - **Toolchain drift is confirmed real in this repository, in-guest, under mise.**
     `crates/trusty-git-analytics/rust-toolchain.toml` specifies `channel =
     "stable"`, resolving to rustc **1.97.1** inside that crate versus the
