@@ -409,4 +409,525 @@ This is the task the whole phase exists for.
   post-teardown `tart list`; state is one of `complete` / `blocked`.
 - **Depends:** P1-T9, P1-T10
 
+---
+
+## PHASE 2 — Host-side skeleton: driver, config, registry, `lib/vm.sh`, preflight, `clean`
+
+**Goal:** everything the harness does **before it touches a guest**, plus the
+complete `tart` boundary module. No provisioning, no install, no oracle.
+
+**Why here.** Phase 1 proved the transport with a script that cheats on every
+contract — no exit codes, no registry, no config, no trap. Phase 2 builds the
+contracts that the rest of the harness is allowed to assume. It is entirely
+host-side and therefore fast to iterate: no phase after this one should be
+debugging argument parsing while a VM boots.
+
+**Checkpoint — PASS CONDITION.**
+
+> All three hold, in one session:
+> 1. `vmtest run local --dry-run` **exits 0**, prints an effective-configuration
+>    banner in which every key carries an origin marker (`default` / `env` /
+>    `flag`), and `tart list` afterwards shows **no new VM**.
+> 2. `VMTEST_CPU=4 vmtest run local --dry-run` prints `cpu 4 (env)`, and
+>    `vmtest run local --cpu 2 --dry-run` prints `cpu 2 (flag)`.
+> 3. `vmtest clean --dry-run` correctly classifies a hand-created stopped
+>    `vmtest-*` VM as `ORPHANED (would delete)` and a `keep`-marked one as
+>    `KEPT (would not delete)`, deleting neither.
+
+### P2-T1 — Driver skeleton, `die()`, traps, cleanup
+
+- **Files:** create `vmtest-harness/vmtest`.
+- **Contract:** DOC-2 §2 (exit-code table), §12.4 (`die`, write-once
+  `VMTEST_EXIT`, "first classified failure wins"), §Shell discipline (bash **3.2**
+  target, `set -euo pipefail` set **once** at the top of the driver before sourcing
+  any `lib/` file, the trap/cleanup rule and its five properties).
+- **Do:** shebang `#!/usr/bin/env bash`; assert `[ "${BASH_VERSINFO[0]}" -ge 3 ]`;
+  `set -euo pipefail`; implement `die()` exactly as DOC-2 §12.4 gives it; install
+  the three traps (`EXIT`, `INT`→130, `TERM`→143 — the explicit `exit` in the
+  signal traps is **not decoration**: after a trap handler returns, bash may resume
+  the interrupted command); implement `vmtest_cleanup` satisfying all five listed
+  properties, including capturing `$?` on its **very first line** and using
+  `${VAR:-}` for every variable it touches (`set -u` and traps interact badly).
+  Subcommand dispatch for `run` / `clean` / `--check-table`; unknown → **exit 2**.
+  - **bash 3.2 is the target and it shapes the code.** No `declare -A`, no
+    namerefs, no `mapfile`, no `${var,,}`, no `globstar`, no `wait -n`. This is
+    *why* §3, §8 and §9 all use the same `key<TAB>value` TSV — the TSV files are
+    the substitute for a hash, not a stylistic preference.
+  - Two gotchas DOC-2 states so you do not rediscover them: `set -e` is
+    **suppressed inside a condition**, so a lib function whose failure must abort
+    must never be called in `if`/`&&`/`||`/`!` context; and `local x=$(cmd)`
+    **swallows** `cmd`'s status — declare first, assign second.
+- **Acceptance:** `bash -n vmtest-harness/vmtest` is silent; `vmtest-harness/vmtest`
+  with no arguments exits **2** and prints usage on **stderr**;
+  `vmtest-harness/vmtest bogus` exits **2**.
+- **Depends:** —
+
+### P2-T2 — Configuration: `vmtest.defaults`, TSV reader, three-tier precedence
+
+- **Files:** create `vmtest-harness/vmtest.defaults`; modify
+  `vmtest-harness/vmtest`.
+- **Contract:** DOC-2 §8.1 (three tiers), §8.2 (**the complete example file is
+  given verbatim — copy it**), §8.3 (precedence and origin reporting), §3.2 (TSV
+  format rules: `key<TAB>value`, `#` comments, blank lines ignored, exactly one
+  line per key, **unknown keys are an error** so a typo cannot silently become
+  "unpinned").
+- **Do:** copy DOC-2 §8.2's file verbatim. Implement one `awk`-based reader used
+  by all three TSV files (§3.1's "one parser, three files"). Implement the
+  **mechanical** override mapping — uppercase the key, prefix `VMTEST_`; there is
+  no table to maintain and no key that is overridable-in-principle but forgotten in
+  practice. CLI flags exist **only** for `--cpu`, `--memory`, `--runid`, `--keep`,
+  `--dry-run` (§8.2); adding a flag per tunable would give the driver a surface
+  larger than its behaviour.
+  - See **§F-5**: DOC-2 assigns no module to the TSV reader. The decision rule is
+    there.
+- **Acceptance:**
+  ```sh
+  bash -c '. vmtest-harness/vmtest --source-only 2>/dev/null; conf_get cpu'   # -> 8
+  ```
+  or equivalent direct invocation returns `8` for `cpu`, `16384` for `memory_mib`,
+  `2700` for `install_timeout`; a defaults file with an injected unknown key makes
+  the driver exit **10**.
+- **Depends:** P2-T1
+
+### P2-T3 — `--runid` generation, validation, and the atomic run registry
+
+- **Files:** modify `vmtest-harness/vmtest`.
+- **Contract:** DOC-2 §4.1 (optional, auto-generated when omitted), §4.2 (format
+  `YYYYMMDDThhmmssZ-<pid>`; validation regex `^[A-Za-z0-9][A-Za-z0-9-]{0,31}$`;
+  violation is **exit 2** before any VM work), §4.3 (registry, run-directory
+  contents, concurrency warning).
+- **Do:** acquire the run by **`mkdir "<registry root>/<runid>"`**. `mkdir` either
+  creates or fails and two concurrent callers cannot both succeed — **a
+  test-then-create sequence (`[ -d ... ] || mkdir ...`) is a race and must not be
+  used.** Registry root is
+  `${VMTEST_STATE_DIR:-$HOME/.local/state/vmtest-harness}/runs/`. Write `pid`,
+  `vm`, `pattern`, `started` immediately on acquisition. **Warn — do not fail —
+  when another run directory holds a live PID** (§4.3: the harness cannot know the
+  operator's host, and refusing a legitimate second run on a large machine would be
+  worse than a warning ignored on a small one).
+- **Acceptance:** `vmtest run local --runid 'a b' --dry-run` exits **2**;
+  `vmtest run local --runid $(printf 'x%.0s' $(seq 40)) --dry-run` exits **2**;
+  running two `--runid dup` invocations where the first holds the lock makes the
+  second exit **10** naming the conflicting run; an auto-generated id matches
+  `^[0-9]{8}T[0-9]{6}Z-[0-9]+$`.
+- **Depends:** P2-T2
+
+### P2-T4 — `lib/vm.sh` — the OS boundary
+
+- **Files:** create `vmtest-harness/lib/vm.sh`.
+- **Contract:** DOC-2 §12.2 (`lib/vm.sh` surface — **eleven** signatures, given in
+  full), §12.1 (calling conventions), §10.1/§10.2 (poll and watchdog parameters),
+  §10.4 (**no `timeout(1)` on macOS**); DOC-1 §3.2 (the designed extension seam for
+  Linux — §12.2), §8.1, §8.2.
+- **Do:** implement `vm_clone`, `vm_size`, `vm_boot`, `vm_wait_ready`, `vm_state`,
+  `vm_exec`, `vm_exec_raw`, `vm_exec_stdin`, `vm_wait_for_stopped`,
+  `vm_assert_stopped`, `vm_delete`, exactly per §12.2's return/emit column.
+  - **`vm_exec` deliberately does not die on non-zero** — it returns the guest's
+    status verbatim so a caller can distinguish "the command failed" from "the
+    harness failed", which is precisely what N1 needs, since N1's *expected* result
+    is a non-zero exit. Callers requiring success wrap with `|| die 50 "..."`.
+  - Build the watchdog from shell primitives: background the command, record the
+    PID, poll `kill -0 <pid>` at the site's interval until the deadline, then kill
+    and reap. **Do not reach for `timeout`/`gtimeout`** — that adds a Homebrew
+    dependency to a harness whose host requirements are otherwise `tart`, `git`,
+    `jq`, `cargo`, and would fail on a clean machine in a way that looks like a
+    harness bug.
+  - `vm_wait_ready` polls at a **fixed** 2 s interval, **not** exponential backoff:
+    the distribution is tight and known (~18–35 s), so backoff's only effect is to
+    overshoot a ready guest, in exchange for saving `tart exec` calls whose cost was
+    measured as negligible (K1d).
+  - **Timeout behaviour is uniform (§10.3): no retry, ever.** A retry that succeeds
+    converts a reproducible failure into an intermittent one, and DOC-1 §8.2 shows
+    a case where retrying is structurally incapable of helping. Classify by phase,
+    report the budget *and* the `vmtest.defaults` key that changes it, and let the
+    cleanup trap still run.
+- **Acceptance:** two mechanical checks —
+  ```sh
+  grep -rln 'tart' vmtest-harness --include='*.sh' --include='vmtest'
+  ```
+  lists **only** `vmtest-harness/lib/vm.sh` (this is the DOC-1 §3.2 invariant and
+  it must stay true for the life of the harness); and `bash -n
+  vmtest-harness/lib/vm.sh` is silent. `lib/` files define **functions and nothing
+  else** — no top-level statements, no `set`, no side effects at source time
+  (§12.1); a stray `set +e` in a library would silently disarm the driver.
+- **Depends:** P2-T1
+
+### P2-T5 — Preflight
+
+- **Files:** modify `vmtest-harness/vmtest` (or `vmtest-harness/lib/vm.sh` for the
+  VM-state checks only).
+- **Contract:** DOC-1 §4.1 (the check table and the **stopped-state refusal**),
+  §8.3; DOC-2 §2 (**exit 10** for every preflight refusal), §3.3 (digest
+  comparison), §8.4 (host-capacity table), §JSON parsing dependency (the `jq`
+  functional smoke test).
+- **Do:** in order — `tart` on `PATH`; `jq` present **and functional**; base-image
+  digest matches `base-image.pin` (or is enforced by construction per P1-T3);
+  **every** existing VM the harness would touch is `stopped`; no runid collision;
+  host capacity per §8.4's four rows (total physical memory **hard-fails**,
+  available memory and core counts **warn**).
+  - **Refuse; do not repair.** DOC-1 §4.1 is exact: *do not attempt to stop it, do
+    not attempt to resume it, do not retry.* Both §8 failure modes are
+    unrecoverable-by-retry, and an automated "fix it up and carry on" path is
+    exactly how a broken image shipped once already.
+  - Core count uses `hw.physicalcpu`, **not** `hw.ncpu`: on Apple silicon `hw.ncpu`
+    counts efficiency cores, which do not contribute to a build the way the
+    measured 8-vCPU guest's cores did, so counting the wrong cores produces a
+    reassuring warning-free run on a machine that will be slow.
+  - The **24 GiB** `host_min_memory_gib` default is a labelled judgment call in
+    DOC-2 §8.4 (16 GiB guest + 8 GiB host), deliberately conservative and tunable
+    *because* it is a guess. Do not "fix" it.
+- **Acceptance:** temporarily corrupt the pin's `digest` value → `vmtest run local
+  --dry-run` exits **10** and prints **both** the pinned digest and what was
+  actually found; rename `jq` out of `PATH` → exits **10** with the host-dependency
+  message; with the pin restored, preflight passes.
+- **Depends:** P2-T2, P2-T3, P2-T4, **P1-T3**
+
+### P2-T6 — `vmtest clean`
+
+- **Files:** modify `vmtest-harness/vmtest`.
+- **Contract:** DOC-2 §5.1 (the four-condition definition of *orphaned* — **all
+  four**), §5.2 (how in-progress runs are distinguished; the PID-reuse edge),
+  §5.3 (`--keep` and the `keep` marker), §5.4 (the four cases and `--dry-run`).
+- **Do:** implement the classifier. **`clean` never issues `tart stop`, never
+  issues `tart suspend`, and never deletes a VM that is not already `stopped`** —
+  it inherits DOC-1 §8.1/§8.3 wholesale. Implement `--dry-run` (full
+  classification, prints the verdict for every candidate, deletes nothing) and
+  `--include-kept`.
+  - The **PID-reuse edge** is accepted deliberately and stated plainly: a recycled
+    PID makes `clean` skip a genuine orphan, leaving a VM for a human. The
+    opposite error — deleting a VM out from under a live run — **cannot occur by
+    this mechanism**. Accepting a conservative false negative to make the dangerous
+    false positive impossible is the trade; do not try to eliminate it with
+    start-time comparisons.
+- **Acceptance:** construct four fixtures and run `vmtest clean --dry-run` —
+  (i) stopped `vmtest-*` with no registry entry → `ORPHANED (would delete)`;
+  (ii) same, with a `keep` marker → `KEPT (would not delete)`;
+  (iii) a registry directory with no matching VM → `PRUNE (bookkeeping)`;
+  (iv) a `vmtest-*` VM in state `running` with no registry entry → the command
+  **refuses**, prints the VM and its state, and exits **10**. Nothing is deleted in
+  any of the four.
+- **Depends:** P2-T4, P2-T5
+
+### P2-T7 — Wire the checkpoint: `vmtest run <pattern> --dry-run`
+
+- **Files:** modify `vmtest-harness/vmtest`.
+- **Contract:** DOC-2 §8.2 (lists `--dry-run` among the five CLI flags), §8.3
+  (effective-configuration banner with origins). **See §F-1 — DOC-2 defines
+  `clean --dry-run` but never defines `run --dry-run`.** The decision rule in §F-1
+  is binding; do not extend it.
+- **Do:** `run --dry-run` performs preflight, prints the effective configuration
+  with origin markers plus the bash version (§Shell discipline: so a bug report
+  says which bash produced it), acquires and immediately releases the run
+  registry entry, and **stops before `tart clone`**. It creates no VM.
+- **Acceptance:** the phase checkpoint's three conditions, verbatim. Note
+  specifically that *"a run whose log does not state its own sizing cannot be
+  compared against DOC-1 §9's cost baseline, and comparing against that baseline is
+  most of what the numbers are for"* (§8.3) — the banner is load-bearing, not
+  decoration.
+- **Depends:** P2-T5, P2-T6
+
+### P2-T8 — Update the MANIFEST
+
+- **Files:** modify `docs/research/tart-vm-testing-harness/03-plan/MANIFEST.md`.
+- **Contract:** MANIFEST.md §Schema.
+- **Do:** state, observed result (paste all three checkpoint commands and their
+  output), files delivered, deviations.
+- **Acceptance:** MANIFEST Phase 2 `Observed result` contains pasted terminal
+  output for all three checkpoint conditions, including the `tart list` that shows
+  no VM was created.
+- **Depends:** P2-T7
+
+---
+
+## PHASE 3 — Guest bring-up: N1, provisioning, toolchain hand-off, source delivery
+
+**Goal:** a `vmtest run local` that boots a guest, proves it has no toolchain,
+provisions it, streams the source in, and tears down — with **no installs and no
+oracle yet**.
+
+**Why this shape.** The scenario file grows across phases. At the end of Phase 3
+`scenarios/install-local.sh` contains step 1 of DOC-2 §12.5's skeleton and nothing
+else. This is deliberate: it gives Phase 3 a runnable checkpoint without inventing
+a driver flag to stop early, and it keeps the scenario honest — a scenario is *a
+sequence of install steps plus the expectations that follow from them* (DOC-1
+§3.6), and at this point there are no install steps, so there are no expectations.
+
+**Checkpoint — PASS CONDITION.**
+
+> `vmtest run local` **exits 0**, and its log shows, in order: `N1 PASS` with a
+> non-zero exit recorded for each of `cargo`, `rustc`, `rustup`; a provisioning
+> block ending with `rustc_version 1.91.1`; a streamed byte count > 80,000,000;
+> and a teardown after which `tart list` contains **no** `vmtest-*` entry.
+> `$VMTEST_RUNDIR` is removed, and `ls "${VMTEST_STATE_DIR:-$HOME/.local/state/vmtest-harness}/runs/"`
+> is empty.
+
+### P3-T1 — N1 precondition probe
+
+- **Files:** create `vmtest-harness/lib/verify.sh` (see §F-4 for why the probes
+  live here); modify `vmtest-harness/vmtest`.
+- **Contract:** DOC-2 §6.2 **N1** (exact command, expected exit, expected output
+  shape, predicate, **exit 30** on failure), §6.3 (**pinned** lifecycle position),
+  §6.1 (why the probe had to be split at all); DOC-1 §4.2.
+- **Do:** implement `negative_probe_n1`, invoked through `vm_exec_raw` — the
+  **raw** variant, because at this point `VMTEST_GUEST_ENV` is still in its
+  **base** lifetime (§7.3: base path only, no cargo, no mise, no cargo variables)
+  and that is exactly what makes N1 meaningful.
+  - Position it at `boot → vm_wait_ready → [N1] → provision` and nowhere else.
+    This is the only window in which the guest genuinely lacks cargo, and it is
+    the assertion a golden image structurally destroys — one of the two stated
+    reasons the harness does not bake one (DOC-1 §4.3).
+- **Acceptance:** on a fresh guest, `N1 PASS` with three recorded non-zero exits;
+  then, as a deliberate negative control, run `mise use -g rust@1.91` **before**
+  N1 in a throwaway invocation and confirm the driver exits **30** without
+  proceeding to provisioning.
+- **Depends:** P2-T8
+
+### P3-T2 — Provisioning
+
+- **Files:** create `vmtest-harness/lib/provision.sh`.
+- **Contract:** DOC-2 §11.1 (**verified** preinstall state), §11.2 (per-tool
+  strategy and the three-assertion mise detection command), §11.3 (**fail, do not
+  repair** — exit 40), §11.5 (the amendment to DOC-1 §3.3); §12.2
+  (`provision_guest`, `provision_detect_mise`, `provision_load_toolchain`).
+- **Do:** implement the three functions with §12.2's exact signatures. Detection
+  asserts all three of: `mise` resolves **under `/opt/homebrew/`**; **no second
+  mise at `$HOME/.local/bin/mise`** — the exact artefact `mise.run` would create,
+  so asserting its absence turns "somebody ran the forbidden command" from a
+  mystery into a named failure; and `mise --version` returns 0. Install only
+  `rust@1.91` and `uv@latest`.
+  - **If detection fails, exit 40. Do not fall back to installing mise.** A
+    `tahoe-base` without a Homebrew mise at `/opt/homebrew/bin/mise` **is not the
+    base image this harness is pinned to** — it is a drift signal, and §3's whole
+    purpose is to catch drift. This is not hypothetical: DOC-1 §5.3 records a
+    golden image that shipped with `~/.zshenv` missing, which made `cargo` return
+    **127** under both `/bin/sh` and `/bin/zsh` and presented as "cargo is not
+    installed". A missing dotfile and a duplicated toolchain manager are the same
+    category of failure.
+- **Acceptance:** `vmtest run local` logs a provisioning block whose total wall
+  clock is within 3× of the measured 30.079 s, with `gh` detected as already
+  present (measured 616 ms — a no-op); a fixture where `$HOME/.local/bin/mise` is
+  created before provisioning makes the run exit **40** with the second-mise
+  message.
+- **Depends:** P3-T1
+
+### P3-T3 — Toolchain hand-off: `toolchain.tsv` and `VMTEST_GUEST_ENV`
+
+- **Files:** modify `vmtest-harness/lib/provision.sh`, `vmtest-harness/lib/vm.sh`.
+- **Contract:** DOC-2 §7.1 (what provisioning writes, where, and its **measured**
+  seven values), §7.2 (why a guest file *and* a host copy), §7.3 (composition
+  happens in **exactly one place**: `vm_exec`), §7.4 (the worked invocation and its
+  four deliberate details); DOC-1 §5.2, §5.3, §3.3, §8.6.
+- **Do:** provisioning writes `/Users/admin/.vmtest/toolchain.tsv`; the driver
+  reads it back over `tart exec` into `$VMTEST_RUNDIR/toolchain.tsv`; the guest
+  copy is **kept**, because it is what makes a `--keep` VM inspectable by a human
+  reproducing a failing command by hand. Compose `VMTEST_GUEST_ENV` — `PATH`,
+  `CARGO_TARGET_DIR`, `SKIP_UI_BUILD=1`, each followed by `export` — inside
+  `vm_exec` and nowhere else. Scenarios never build a prefix and never see one.
+  - **Ordering is load-bearing, not cosmetic:** `~/.cargo/bin` **must precede** the
+    mise shims directory. mise's rust backend delegates to rustup, so putting the
+    real rustup shims first is what allows rustup's *directory-based*
+    `rust-toolchain.toml` resolution to work — which is precisely the mechanism
+    DOC-1 §8.4 depends on. Reverse the order and §8.4's assertion silently stops
+    measuring what it claims to measure.
+  - **`VMTEST_GUEST_ENV` has two lifetimes** (§7.3): base before provisioning,
+    full after. It is the only global that changes after preflight (§12.3).
+- **Acceptance:** `$VMTEST_RUNDIR/toolchain.tsv` contains all seven keys of §7.1
+  with `rustc_version 1.91.1`; `guest_path` begins with
+  `/Users/admin/.cargo/bin:/Users/admin/.local/share/mise/shims:`; a `vm_exec` of
+  `printf '%s' "$PATH"` returns that exact string.
+- **Depends:** P3-T2
+
+### P3-T4 — Promote the spike into `lib/source.sh`; delete the spike
+
+- **Files:** create `vmtest-harness/lib/source.sh`; **delete**
+  `vmtest-harness/spike/`.
+- **Contract:** DOC-2 §12.2 `source_deliver_local` (signature, and "**emits the
+  streamed byte count**, which DOC-1 §6.1 explicitly asks be logged"), §12.1
+  (positional string arguments; the value channel is stdout and carries **at most
+  one value**; diagnostics **always** to stderr because §1's oracle parses stdout);
+  DOC-1 §6.1.
+- **Do:** port P1-T6's pipeline into `source_deliver_local <vm_name> <host_repo>
+  <guest_dir>` through `vm_exec_stdin`. Emit **only** the byte count on stdout;
+  everything else goes to stderr. Then delete the spike directory — its job was to
+  fail fast, and it has either done that or been superseded.
+  - **Naming tension, recorded (§12.2):** DOC-1 §3.4 calls `source.sh` "source
+    delivery" while DOC-1 §12.1 wants reusable **install-step** functions, so
+    `install_from_path` / `install_from_registry` (P5-T1, P7-T1) also live here.
+    Read `source.sh` as *"source acquisition and installation"*. A later split into
+    `lib/install.sh` is permitted and would change no scenario, because scenarios
+    call the functions, not the file.
+- **Acceptance:** `vmtest run local` logs the byte count; `ls vmtest-harness/spike`
+  fails; `git log --stat` shows the spike deleted in the same commit that adds
+  `lib/source.sh`.
+- **Depends:** P3-T3, P1-T6
+
+### P3-T5 — `scenarios/install-local.sh` (delivery only) and scenario dispatch
+
+- **Files:** create `vmtest-harness/scenarios/install-local.sh`; modify
+  `vmtest-harness/vmtest`.
+- **Contract:** DOC-2 §12.5 (the worked skeleton — implement **step 1 only** at
+  this phase), §12.1, §12.4 (scenarios do **not** call `die` with a code of their
+  own — they call lib functions, which die with their own phase code, so a scenario
+  stays a description of steps and expectations and never encodes the exit-code
+  table); DOC-1 §3.6. **See §F-6** — the driver's pattern→file→function dispatch is
+  unspecified; the decision rule is there.
+- **Do:** the scenario contains `scenario_install_local()` with step 1 of §12.5 and
+  a `log` of the byte count. Note what the skeleton must **not** contain: no
+  `tart`, no `PATH`, no timeout, no exit code, no `if` around a lib call.
+- **Acceptance:** `grep -E 'tart|PATH=|exit ' vmtest-harness/scenarios/install-local.sh`
+  produces **no output**; `vmtest run local` reaches teardown and exits 0.
+- **Depends:** P3-T4
+
+### P3-T6 — `~/.zshenv`: written, never depended on
+
+- **Files:** modify `vmtest-harness/lib/provision.sh`.
+- **Contract:** DOC-2 §11.4 (the reconciliation, stated as a blockquote rule);
+  DOC-1 §5.3.
+- **Do:** provisioning **may** write `~/.zshenv` as a convenience for a human
+  inspecting a `--keep` VM. **No harness logic may read it, source it, or depend on
+  it having been written.** The measured step exists (`STEP_ZSHENV_MS=617`), so
+  writing it costs nothing. The reconciliation must be explicit in a comment **or
+  someone will delete one rule and trust the other**.
+- **Acceptance:** the file is written in the guest, and `grep -rn 'zshenv'
+  vmtest-harness --include='*.sh' --include=vmtest` shows it referenced **only** in
+  the writing step — never in a read, source, or conditional. The deliberate
+  deletion drill that proves this is P8-T1.
+- **Depends:** P3-T2
+
+### P3-T7 — Run the checkpoint and update the MANIFEST
+
+- **Files:** modify `docs/research/tart-vm-testing-harness/03-plan/MANIFEST.md`.
+- **Contract:** MANIFEST.md §Schema.
+- **Do:** run `vmtest run local` to completion; paste the observed log; record
+  files delivered and deviations. Also record the second boot-to-ready measurement
+  (subsequent boots measured ~18 s) for comparison against P1.
+- **Acceptance:** MANIFEST Phase 3 `Observed result` contains the four log
+  landmarks named in the checkpoint plus the empty-registry `ls`.
+- **Depends:** P3-T5, P3-T6
+
+---
+
+## PHASE 4 — `expected-binaries.tsv` and `--check-table`
+
+**Goal:** the authoritative expectation table, and the self-diff that keeps it
+honest. Host-only, no VM.
+
+**Why before the oracle.** The oracle consumes this table. DOC-1 §7.4 is blunt
+about the stakes: the Single-Install gate *"is only ever as good as §7.2's table.
+It cannot detect the loss of a binary it has never heard of — an omitted row is
+not a weaker assertion, it is **no** assertion, and it fails silently and
+permanently."* That is not hypothetical either: the `trusty-memory-mcp-bridge`
+omission (DOC-2 §9.3) would have produced exactly that blindness. Build the table
+and its differ before anything asserts against it.
+
+**Checkpoint — PASS CONDITION.**
+
+> `vmtest --check-table` **exits 0** against the workspace as it stands, printing
+> no ADDED/REMOVED/CHANGED findings. Then, with one row deliberately deleted from
+> `expected-binaries.tsv`, it **exits 60** and prints exactly one `REMOVED` finding
+> naming that `(package, binary)` pair. The row is restored afterwards and the
+> command exits 0 again.
+
+### P4-T1 — Seed `expected-binaries.tsv`
+
+- **Files:** create `vmtest-harness/expected-binaries.tsv`.
+- **Contract:** DOC-2 §9.1 (**nine** columns, tab-separated, one header row, `#`
+  comments, `LF` endings), §9.2 (`[package] name` is the key; `package` + `binary`
+  is the composite primary key), §9.3 (**the seed content is given verbatim —
+  copy it**), §9.4 (`req_features` and the implicit target); DOC-1 §7.2, §7.5, D3.
+- **Do:** copy §9.3's block verbatim, including the out-of-scope rows. Do not
+  re-derive it by hand.
+  - **`in_scope` exists rather than two files** because `--check-table` must diff
+    against **every** `[[bin]]` in the workspace or it cannot detect a newly added
+    binary: a binary absent from a scope-only file is indistinguishable from one
+    that was never in scope.
+  - **Twelve in-scope rows, seven packages.** Both `trusty-mpm` rows carry
+    `expect_a = present` (§A.1). `tga`'s `package` is `tga` while its `crate_dir`
+    is `trusty-git-analytics` — the discontinuity DOC-1 D3 warns about.
+  - `req_features` is carried because four in-scope binaries are gated behind
+    `required-features` that are *currently* in their crate's `default` set. If a
+    future change drops one, `cargo install` **succeeds and silently produces no
+    binary** — a green install with a missing daemon, exactly DOC-1 §7.4's failure
+    mode.
+- **Acceptance:**
+  ```sh
+  awk -F'\t' 'NR>1 && $1 !~ /^#/ && NF!=9 {print NR": "NF}' vmtest-harness/expected-binaries.tsv
+  ```
+  prints nothing (every row has nine fields); `awk -F'\t' '$6=="yes"' | wc -l`
+  returns **12**; `grep -c 'trusty-memory' ` shows the **three** `trusty-memory`
+  binary rows including `trusty-memory-mcp-bridge`.
+- **Depends:** P2-T8
+
+### P4-T2 — `--check-table` self-diff
+
+- **Files:** modify `vmtest-harness/vmtest`.
+- **Contract:** DOC-2 §9.6 (source of truth **confirmed**; the six-step algorithm;
+  exit **60**; **no auto-fix**), §9.4 (implicit targets); DOC-1 §7.2.
+- **Do:** read actual targets via **`cargo metadata --no-deps --format-version 1`**
+  and `jq`, not by parsing `Cargo.toml` files. Three real defects avoided:
+  `cargo metadata` reports **implicit** targets (`crates/trusty-agents-local` has a
+  `src/main.rs` and no `[[bin]]` section, so manifest-parsing misses it entirely
+  and would report a spurious deletion); it resolves workspace-inherited fields;
+  and it enumerates the non-`crates/*` path member
+  `crates/trusty-agents/ui/src-tauri` that a `crates/*/Cargo.toml` glob would skip.
+  Implement ADDED / REMOVED / CHANGED, and RENAMED as a **suggestion only, never
+  applied automatically**.
+  - **It does not auto-fix.** A table that rewrites itself to match reality asserts
+    nothing — the human edit *is* the review step, and removing it would turn the
+    authoritative expectation source into a mirror.
+  - Compare **columns 1–5 only**. `in_scope` and the three `expect_*` columns are
+    human judgments about scope, not facts about the workspace, and nothing can
+    derive them.
+- **Acceptance:** the phase checkpoint, verbatim. Additionally, changing a
+  `bin_path` value in the TSV produces exactly one `CHANGED` finding and exit 60.
+- **Depends:** P4-T1
+
+### P4-T3 — Reconcile the seed against today's workspace
+
+- **Files:** possibly modify `vmtest-harness/expected-binaries.tsv`; modify
+  MANIFEST.
+- **Contract:** DOC-2 §9.3, §9.6.
+- **Do:** DOC-2's seed was enumerated on 2026-07-31 (26 explicit `[[bin]]` targets
+  across 20 manifests, plus one implicit). If `--check-table` reports findings on
+  the unmodified workspace, the workspace has moved since. **Record every finding
+  verbatim in the MANIFEST**, then apply the human edit — adding a genuinely new
+  binary with `in_scope=no` unless it belongs to one of D3's seven packages, in
+  which case it is `in_scope=yes` with `present` in all three `expect_*` columns.
+  - **Do not silently widen D3's scope.** DOC-2 §9.3 note 2 records that
+    `trusty-review` is a publishable crate with a daemon and a `/health` endpoint
+    that is **not** in D3's seven, carried `in_scope=no` faithfully to D3, and that
+    *"whether D3's scope should include it is a design question this document does
+    not decide, but it should be decided knowingly rather than by omission."* Same
+    rule for anything new: knowingly, in a PR, not as a side effect of this task.
+- **Acceptance:** `vmtest --check-table` exits 0; the MANIFEST records either
+  "no drift since DOC-2 §9.3" or the exact findings and the edit made.
+- **Depends:** P4-T2
+
+### P4-T4 — Scope helpers, including the deduplication the oracle needs
+
+- **Files:** modify `vmtest-harness/vmtest` (or `lib/verify.sh`, per §F-5).
+- **Contract:** DOC-2 §12.5 (calls `tsv_scope_crate_dirs`, "column 2 where
+  in_scope=yes"), §9.1, §9.3. **See §F-3** — the twelve in-scope rows contain only
+  **seven** distinct `crate_dir` values, and DOC-2 never says to deduplicate.
+- **Do:** implement `tsv_scope_crate_dirs` (unique `crate_dir`, in first-appearance
+  order), `tsv_scope_packages` (unique `package`), and `tsv_expect <package>
+  <binary> <pattern>`. Apply §F-3's decision rule.
+- **Acceptance:** `tsv_scope_crate_dirs` emits **7** lines, beginning
+  `trusty-search` and containing `trusty-git-analytics` (**not** `tga` — that is
+  the package name, and `--path` takes the directory); `tsv_scope_packages` emits
+  **7** lines including `tga` and `trusty-mpm`; `tsv_expect trusty-mpm tm a`
+  returns `present`.
+- **Depends:** P4-T1
+
+### P4-T5 — Update the MANIFEST
+
+- **Files:** modify `docs/research/tart-vm-testing-harness/03-plan/MANIFEST.md`.
+- **Contract:** MANIFEST.md §Schema.
+- **Do:** state, observed result (paste the three `--check-table` invocations of
+  the checkpoint), files delivered, deviations — including any reconciliation from
+  P4-T3.
+- **Acceptance:** Phase 4 `Observed result` shows exit 0, then exit 60 with the
+  `REMOVED` finding, then exit 0 again.
+- **Depends:** P4-T3, P4-T4
+
 <!-- APPEND-POINT -->
