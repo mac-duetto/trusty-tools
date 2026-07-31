@@ -1916,10 +1916,12 @@ stale copy of DOC-2 needs to be able to tell which is which.
 - **Why it mattered:** the 2026-07-31 reversal amended DOC-1 and DOC-2 but not their
   index. The index is the **first** thing a zero-context engineer reads, and it
   stated as fact the exact premise DOC-1 D2 calls *"wrong"* in both halves.
-- **Resolution — the README bullet is corrected.** It now reads that all three
-  patterns cover all seven crates, that `trusty-mpm` is published at **v1.0.2**, and
-  that the "documented gap" is dissolved. See **`../02-design/README.md`**, "The
-  short version".
+- **Resolution — the README bullet is corrected.** It read, at the time of this
+  resolution, that all three patterns cover all **seven** crates, that `trusty-mpm`
+  is published at **v1.0.2**, and that the "documented gap" is dissolved. **The same
+  day's D3 amendment then took the scope to eight** (`trusty-review`, §A.1b), and
+  the README was updated again to match. See **`../02-design/README.md`**, "The
+  short version" — which now says **eight**.
 - **What the engineer does now:** nothing. **P8-T5** is reduced to a verification
   check.
 
