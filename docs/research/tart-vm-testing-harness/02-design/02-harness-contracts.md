@@ -1240,7 +1240,7 @@ them as polling would invite someone to add pointless polling around a synchrono
 | Site | Observable condition | Interval | Maximum | Grounding |
 |---|---|---|---|---|
 | **boot-ready** | `tart exec <vm> /bin/sh -c 'exit 0'` returns 0 | 2 s | **150 s** | 34.4 s first boot (`vm-install-probe-findings.md:378`, `BOOT_TO_READY_MS=34414`); 18.0 s subsequent (`:483`, `COLD_BOOT_TO_READY_MS=17993`). ~4.4× the measured first boot. |
-| **`wait_for_stopped()`** | `tart list` reports state `stopped` | 1 s | **120 s** | `tart stop` asynchrony measured in K1/K1b/K1c; poll overhead measured negligible (`../01-research/logs/k1d-state-poll-overhead.log`). Maximum is a **judgment call** — worst-case flush duration was never measured. |
+| **`wait_for_stopped()`** | `tart list` reports state `stopped` | 1 s | **120 s** | `tart stop` asynchrony measured in K1/K1b/K1c; poll overhead measured negligible (`../01-research/logs/k1d-state-poll-overhead.log`). Maximum is a **judgment call** — worst-case flush duration was never measured. The stop this waits on is issued by `vm_request_stop` (§12.2), whose exit code is discarded. |
 | **daemon health** | `GET /health` returns 200 with parseable JSON (§1.3) | 1 s | **60 s** | **Wholly unmeasured.** `launchctl bootstrap` under `tart exec` is confirmed to work (DOC-1 §8.7) but daemon time-to-ready was never timed. |
 
 `vm_wait_ready` polls at a **fixed** 2 s interval, not with exponential backoff.
@@ -1442,6 +1442,7 @@ may contain the string `tart`.
 | `vm_exec <vm_name> <cmd_string>` | runs with `$VMTEST_GUEST_ENV` prefixed; **emits** guest stdout; **returns the guest's exit status verbatim** |
 | `vm_exec_raw <vm_name> <cmd_string>` | as `vm_exec` but **no** env prefix — for N1 (§6.2) and for reading `toolchain.tsv` before the prefix exists |
 | `vm_exec_stdin <vm_name> <cmd_string>` | as `vm_exec`, piping host stdin through `tart exec -i` |
+| `vm_request_stop <vm_name>` | flushes the guest, then issues `tart stop` and **discards its exit code**; always returns 0 |
 | `vm_wait_for_stopped <vm_name> <timeout_s>` | polls §10.1; 0, or dies 70 on timeout |
 | `vm_assert_stopped <vm_name>` | 0 if state is `stopped`, else dies 10 |
 | `vm_delete <vm_name>` | 0, or dies 70 |
@@ -1450,6 +1451,74 @@ may contain the string `tart`.
 so a caller can distinguish "the command failed" from "the harness failed" — which
 is exactly what N1 (§6.2) needs, since N1's *expected* result is a non-zero exit.
 Callers that require success wrap with `vm_exec ... || die 50 "..."`.
+
+**`vm_request_stop` is the shutdown initiator, and it was missing.**
+*(Amended 2026-07-31.)* Before this amendment **nothing in the specified path ever
+asked the guest to stop.** `vm_wait_for_stopped` *polls* `tart list` for state
+`stopped` (§10.1), and the cleanup rule (§Shell discipline, property 5) ordered it
+before `vm_delete` — so as literally written, cleanup polled a still-running VM for
+its full 120 s budget and exited **70** on every run, including successful ones.
+§10.1's own grounding cell cites "`tart stop` asynchrony measured in K1/K1b/K1c",
+which presupposes a `tart stop` that no function in §12.2 issued. It lives in
+`lib/vm.sh` because that is the only file permitted to contain the string `tart`
+(DOC-1 §3.2).
+
+What it does, in order:
+
+```sh
+# 1. flush the guest, from inside the guest — the only measured protection
+vm_exec_raw "$vm" '/bin/sync; /bin/sync'     # failure is logged to stderr, not fatal
+# 2. ask tart to stop it, and DISCARD the status
+tart stop "$vm" >/dev/null 2>&1 || :
+```
+
+Both steps are the research's own stated procedure
+(`../01-research/vm-install-probe-findings.md:820-831`): `sync` in the guest, then
+`tart stop`, then verify by observation rather than by exit code. Step 1 is
+non-fatal because cleanup runs on every exit path (§Shell discipline), including
+ones where the guest is already unreachable; refusing to stop a VM because its
+flush failed would leave a VM behind for a reason weaker than the stop itself.
+
+**This does not violate DOC-1 §8.1.** That rule reads "never issue a bare `tart
+stop` **and treat its return as completion**", generalised as "a tart exit code is
+not a completion signal". The prohibition is on *trusting the return*, not on
+issuing the command — the same research that produced the rule ends with a
+procedure whose third step is `tart stop`. `vm_request_stop` discards the status
+precisely so that nothing downstream can trust it, and `vm_wait_for_stopped` is
+what decides the VM stopped.
+
+**Durability is not what this teardown needs, and saying so prevents a false
+inheritance.** The research is explicit that polling for `stopped` does **not**
+protect a write — "the state flag is not a durability flag"
+(`vm-install-probe-findings.md:814-817`). That finding was about *baking*, where
+the disk image is the artefact being kept. This harness deletes the VM immediately
+afterwards (§Shell discipline, property 5) and keeps it only under `--keep`, which
+skips teardown entirely. The observable requirement here is only that the VM reach
+`stopped` before `tart delete`. The `sync` is retained anyway: it costs one
+`tart exec`, and running the measured procedure rather than a subset of it is
+cheaper than arguing about which half mattered.
+
+**If the graceful path fails there is no escalation.** §10.3's "no retry, ever"
+applies unchanged: `vm_request_stop` is issued once. If the VM has not reached
+`stopped` within `stopped_timeout` (120 s, §8.2), `vm_wait_for_stopped` dies **70**
+— "the run's result may have been fine; **the host is not clean**" (§2) — and the
+VM is left in place for a human. The harness does **not** kill the `tart run`
+process recorded in `$VMTEST_RUNDIR/tart-run.pid`, does not `tart delete` a running
+VM, and does not `tart suspend` (DOC-1 §8.2). `vmtest clean` will refuse it in turn
+(§5.4: `running`, no live registry entry → exit 10) and print the manual commands.
+Force-killing a way to a clean `tart list` would be repairing, which DOC-1 §4.1
+forbids in the one place this design is most emphatic about it.
+
+> **Judgment call, flagged — the initiator is `tart stop`, not a guest-side
+> shutdown.** A guest-side `shutdown -h now` over `tart exec` would be the more
+> obviously "graceful" mechanism, and it is what the superseded Track A script
+> reached for (`../01-research/vm-install-testing-trackA-fable.md:299`) — but over
+> **SSH**, which DOC-1 §5.1 excludes as a transport, and requiring passwordless
+> `sudo` in the guest, which the research never measured. Specifying it here would
+> be inventing a mechanism. The option above is the narrowest one consistent with
+> what *was* measured. If a guest-side shutdown proves more reliable in practice
+> that is a legitimate refinement — but it must arrive with the observation that
+> motivated it, validated on the first real run, not adopted on intuition.
 
 **`lib/provision.sh`**
 
@@ -1668,12 +1737,18 @@ trap 'vmtest_cleanup; exit 143' TERM
    never created, cleanup does nothing and returns 0. Preflight failures (exit 10)
    must not produce a teardown error on top of the real message.
 4. **Do the right thing under `--keep`.** Write the `keep` marker into the run
-   directory (§4.3, §5.3), print the VM name and an inspection hint, **skip both
-   `wait_for_stopped()` and `tart delete`**, and leave the run directory in place.
-5. **Otherwise: `vm_wait_for_stopped` then `vm_delete`, in that order, always.**
-   Never a bare `tart stop` (DOC-1 §8.1 — write loss reproduced 4 of 5 attempts and
-   the confirmed root cause of a golden image shipping broken). Then remove the run
-   directory. Then re-exit with the preserved code.
+   directory (§4.3, §5.3), print the VM name and an inspection hint, **skip all
+   three of `vm_request_stop`, `vm_wait_for_stopped`, and `vm_delete`**, and leave
+   the run directory in place.
+5. **Otherwise: `vm_request_stop`, then `vm_wait_for_stopped`, then `vm_delete`, in
+   that order, always.** *(Amended 2026-07-31: `vm_request_stop` added. Nothing
+   previously issued the shutdown, so the poll had nothing to observe and cleanup
+   ran out its budget and exited 70 on every path — see §12.2.)* Never a bare
+   `tart stop`, meaning never issue one and treat its return as completion (DOC-1
+   §8.1 — write loss reproduced 4 of 5 attempts and the confirmed root cause of a
+   golden image shipping broken); `vm_request_stop` discards the status and the poll
+   is the completion signal. Then remove the run directory. Then re-exit with the
+   preserved code.
 
 The explicit `exit 130` / `exit 143` in the signal traps are not decoration. After a
 trap handler returns, bash may resume the interrupted command rather than
@@ -1769,6 +1844,11 @@ Recorded in the same register as DOC-1 §14, so they are not lost.
 - **Full-stack watchdog is 5.6× a low-confidence estimate** (§10.2). Tighten once
   the first pattern-(c) full-stack run is timed, as DOC-1 §9 already requests.
 - **Daemon time-to-ready** (§10.1). Wholly unmeasured; the 60 s maximum is a guess.
+- **Guest-side graceful shutdown** (§12.2, added 2026-07-31). `vm_request_stop`
+  issues `tart stop` and discards the status, because that is the only shutdown path
+  the research measured. A guest-side `shutdown -h now` over `tart exec` is the
+  plausible alternative and was never measured — it needs an observation from a real
+  run before it is adopted, not a preference.
 
 ---
 
