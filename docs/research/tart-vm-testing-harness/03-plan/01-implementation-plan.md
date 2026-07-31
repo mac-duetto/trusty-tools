@@ -930,4 +930,607 @@ and its differ before anything asserts against it.
   `REMOVED` finding, then exit 0 again.
 - **Depends:** P4-T3, P4-T4
 
+---
+
+## PHASE 5 — Pattern (c) complete: install steps, N2, and the full oracle
+
+**Goal:** `vmtest run local` installs all seven crates from the streamed tree and
+asserts all twelve binaries, `tctl stack doctor --json`, `tctl version --json`, the
+Single-Install Convention, and interim daemon liveness.
+
+**Why this is the largest phase.** Everything before it was infrastructure.
+This is where the harness first makes its actual claim — *"a clean install of this
+stack works today"* — and it is also where the first full-stack run is timed,
+which DOC-1 §9 and DOC-2 §10.2 both explicitly request as a replacement
+measurement.
+
+**Checkpoint — PASS CONDITION.**
+
+> `vmtest run local` **exits 0**, and the run log shows:
+> (i) all **seven** crates installed via `cargo install --path`, each preceded by a
+> `rustc --version` line emitted from inside that crate's directory;
+> (ii) `verify_binaries` reporting **12/12 in-scope binaries present**;
+> (iii) `tctl stack doctor --json` parsed, with every one of the seven packages —
+> **including `trusty-mpm`** — satisfying `health ∈ {healthy, stale}`,
+> `on_path == true`, `version != null`;
+> (iv) `verify_single_install` passing for `trusty-search` (2 binaries),
+> `trusty-memory` (**3**), `trusty-installer` (2), and `trusty-mpm` (2);
+> (v) N2 recorded with its observed exit code and stderr;
+> (vi) a total wall clock, logged, which is recorded in the MANIFEST as the
+> **first full-stack measurement**.
+
+### P5-T1 — `install_from_path` and the per-build-step `rustc` assertion
+
+- **Files:** modify `vmtest-harness/lib/source.sh`; modify
+  `vmtest-harness/lib/verify.sh`.
+- **Contract:** DOC-2 §12.2 (`install_from_path`, `verify_rustc` — "called from
+  `install_from_path`", dies **50**), §7.4 (the worked invocation and its four
+  deliberate details); DOC-1 §8.4, §8.6, §7.3, §6.5.
+- **Do:** `install_from_path <vm_name> <guest_dir> <crate_dir>` asserts `rustc
+  --version` **first**, then runs `cargo install --path`.
+  - **`cd` into the crate directory, and use `&&` not `;`.** rustup resolves by
+    current directory; the assertion is worthless run anywhere else, which is
+    exactly why DOC-1 requires it adjacent to the build rather than once at
+    provisioning time. A failed `cd` must not run the command in the wrong
+    directory.
+  - **Toolchain drift is confirmed real in this repository, in-guest, under mise.**
+    `crates/trusty-git-analytics/rust-toolchain.toml` specifies `channel =
+    "stable"`, resolving to rustc **1.97.1** inside that crate versus the
+    workspace-pinned **1.91.1** at the root (measurement K5, on the mise-provisioned
+    VM `probe-k2`). So `verify_rustc` must take the **expected** version as an
+    argument rather than assuming 1.91.1 everywhere — DOC-2 §12.2's signature
+    `verify_rustc <vm_name> <guest_dir> <expected>` already says so.
+  - **`tctl install` MUST NOT be used here** (DOC-1 §6.5). `install_one()` in
+    `crates/trusty-installer/src/commands/install.rs` is prebuilt-tarball-first with
+    a crates.io `cargo install --locked` fallback and has **no `--path` code path**,
+    so invoking it during a source-based scenario would silently overwrite the
+    source-built binaries under test — a false pass, the worst possible harness
+    failure mode.
+  - **Never `cp` a binary into a `PATH` directory** (DOC-1 §7.3): copying a Mach-O
+    binary is not equivalent to installing it, and cdhash-dependent behaviour (TCC
+    attribution, keychain ACLs, notarisation) does not survive an arbitrary copy.
+- **Acceptance:** the run log contains seven `rustc --version` lines, each
+  immediately preceding its `cargo install --path`, and the one emitted from
+  `crates/trusty-git-analytics` reports a **different** version from the other six
+  — reproducing K5. If it does not, that is a finding to record, not to smooth over.
+- **Depends:** P4-T5
+
+### P5-T2 — **Pin RC-2**: the `tctl install` cargo-absent exit code
+
+DOC-2 §6.2 deliberately leaves N2's predicate weak because the code at
+`install.rs:826` was never read out to a verified value. This task closes that.
+
+- **Files:** modify MANIFEST (Measurements); modify `vmtest-harness/lib/verify.sh`
+  (predicate).
+- **Contract:** DOC-2 §6.2 **RC-2** ("must exit with a stable, documented, non-zero
+  code distinct from 1, and must emit actionable guidance on stderr, leaving stdout
+  clean… Until that code is fixed and documented, N2 asserts only: exit != 0,
+  stdout empty, stderr non-empty and containing a cargo-related token. That weaker
+  predicate is stated as weak on purpose."), §2 (exit-code table).
+- **Do:** three steps, in order, no decision required at any of them.
+  1. **Read the guard.** `crates/trusty-installer/src/commands/install.rs:826` —
+     `which::which("cargo").map_err(...)` inside the `Outcome::Fallback` arm,
+     producing `anyhow!("no Rust toolchain found on PATH (cargo not available);
+     cannot fall back to \`cargo install {}\`")`. The same guard exists at
+     `upgrade.rs:502` and `self_update.rs:295`.
+  2. **Trace it to a process exit code.** `install::run()` at `install.rs:102-110`
+     returns `i32`; the error can reach `return 1` at `install.rs:148`, `:250`,
+     `:273`, `:311`, or the roll-up `report.exit_code()` at `:321`. That `i32` is
+     handed to `std::process::exit` at
+     `crates/trusty-installer/src/main.rs:133`. Determine **which path** the
+     cargo-absent error takes by reading, then **confirm by observation** — N2
+     itself is the experiment.
+  3. **Record and branch.**
+     - **If the observed code is non-zero and distinct from 1:** RC-2 is satisfied
+       in practice. Tighten N2 to assert that **exact** code, record it in the
+       MANIFEST with the verbatim stderr, and note in the MANIFEST that RC-2
+       remains formally open until the code is *documented* in `trusty-installer`
+       (observing a code does not make it a contract).
+     - **If the observed code is 1** (or varies between runs): RC-2 is **not**
+       satisfiable today. Leave N2's weak predicate exactly as DOC-2 wrote it,
+       record the observed value verbatim, and record RC-2 as still-open with the
+       precise reason. **Do not change `trusty-installer` to make the harness
+       happier** — that is a separate PR against a shipping crate, out of this
+       plan's scope, and doing it here would mean the harness and the thing it
+       tests were changed in the same breath.
+- **Acceptance:** the MANIFEST Phase 5 `Measurements` field contains the literal
+  observed exit code and the first line of stderr, and `lib/verify.sh` contains
+  either the pinned code or a comment citing `DOC-2 §6.2 RC-2` explaining why the
+  weak predicate stands.
+- **Depends:** P5-T1
+
+### P5-T3 — N2 guide-and-abort probe
+
+- **Files:** modify `vmtest-harness/lib/verify.sh`; modify
+  `vmtest-harness/scenarios/install-local.sh`.
+- **Contract:** DOC-2 §6.2 **N2** (the two-step capture-then-reinvoke command),
+  §6.3 (position: **after** the scenario's install steps — the earliest point at
+  which its subject exists), §6.1 (the circularity that forced the split).
+- **Do:** step 1 captures `TCTL_PATH` under the **installed** environment; step 2
+  re-invokes that **absolute path** under a PATH that excludes `~/.cargo/bin` and
+  the mise shims. The capture is the load-bearing step: `tctl` is reached in step 2
+  by absolute path *precisely because* it is not on the PATH step 2 constructs.
+  - **An empty `TCTL_PATH` is a harness error, not an RC-2 observation** — it means
+    step 1 failed to find the binary the scenario claims to have installed. Raise it
+    as such.
+  - Failure is **exit 30**, the same phase code as N1: both are the negative probe,
+    and an operator reading the code should not have to know which half fired. The
+    message says which.
+  - **Departure from DOC-1, already recorded (§6.3):** DOC-1 §4.2 describes one
+    probe; DOC-2 specifies two, because the single-probe formulation is not
+    executable — at DOC-1's position the subject of the probe does not yet exist.
+    DOC-1's actual *requirement* is fully preserved. Do not "simplify" this back.
+- **Acceptance:** the run log records N2 with a non-zero exit, **empty stdout**,
+  and non-empty stderr containing a cargo-related token; `TCTL_PATH` is logged and
+  is non-empty.
+- **Depends:** P5-T2
+
+### P5-T4 — `verify_binaries` and `verify_single_install`
+
+- **Files:** modify `vmtest-harness/lib/verify.sh`.
+- **Contract:** DOC-2 §12.2 (both signatures, both die **60**), §9.3
+  (`expect_<pattern>` columns); DOC-1 §7.4 (the Single-Install Convention gate),
+  §7.5 (pattern-aware by construction).
+- **Do:** `verify_binaries` iterates `in_scope=yes` rows and asserts
+  present/absent per the pattern column. `verify_single_install <package>` asserts
+  that **every** binary of that package is present, not merely one.
+  - The two functions are separate **on purpose**: §7.4's gate is specifically that
+    installing a parent yields *all* its sidecars, and stating it as its own
+    function makes the failure message say *"trusty-memory installed but sidecar
+    trusty-memory-mcp-bridge is missing"* rather than *"a binary is missing"*.
+    Given that the third `trusty-memory` sidecar was dropped from DOC-1's original
+    seed table, this gate earns its separate existence.
+  - `trusty-mpm` gets a `verify_single_install` call too — it ships **two**
+    binaries, `tm` and `trusty-mpm`, and under the D2 reversal both are expected
+    present under every pattern (§A.1). DOC-2 §12.5's skeleton predates the
+    reversal in this respect; adding the fourth call is consistent with §7.4 and is
+    a **plan-level judgment call**, recorded here as one.
+- **Acceptance:** `verify_binaries` logs `12/12 present`; four
+  `verify_single_install` calls pass; deliberately renaming
+  `~/.cargo/bin/trusty-memory-mcp-bridge` in the guest makes the run exit **60**
+  with the sidecar named in the message.
+- **Depends:** P5-T3, P4-T4
+
+### P5-T5 — `verify_stack_doctor`
+
+- **Files:** modify `vmtest-harness/lib/verify.sh`.
+- **Contract:** DOC-2 §1.1 (the full JSON shape, the field table, and the
+  **pass predicate**), §12.2; DOC-1 §7.1 (**JSON only — never scrape
+  human-readable text**).
+- **Do:** run `tctl stack doctor --json` through `vm_exec`, parse **host-side**
+  with `jq`, apply §1.1's per-member predicate. There are no `rename` or
+  `skip_serializing_if` attributes on the struct, so field names serialise verbatim
+  and `None` serialises as `null` — **not** as an absent key — and the oracle may
+  address every field unconditionally.
+  - **`stale` is accepted, `down` is not.** On a freshly installed VM where daemons
+    have just been bootstrapped, a stale heartbeat is expected timing, not a
+    packaging defect; the harness's claim is that *installation* succeeded. `down`
+    and `unknown` do refute that and fail. (§1.1, a labelled judgment call.)
+  - **Do not use `tctl stack doctor`'s own exit code as the assertion.** It exits 0
+    on `ok`, 2 on `degraded`, 3 on unknown member, 1 on JSON write failure. Read the
+    JSON on stdout and apply the predicate. This is the same principle as DOC-1
+    §8.1's "a tart exit code is not a completion signal", applied to a different
+    tool. Log `verdict` for the human; do not assert on it.
+  - **Do not reach for `tctl stack health --json`** because the name reads better:
+    it has a narrower shape and a **different verdict vocabulary** (`ready` |
+    `degraded` versus doctor's `ok` | `degraded`).
+- **Acceptance:** the run log shows the parsed member list with seven packages, all
+  satisfying the predicate, `trusty-mpm` among them; and the `verdict` value logged
+  but not asserted.
+- **Depends:** P5-T4
+
+### P5-T6 — `verify_versions`
+
+- **Files:** modify `vmtest-harness/lib/verify.sh`.
+- **Contract:** DOC-2 §1.2 (the literal shape, the three properties, the pass
+  predicate), §12.2. **See §F-2 — §1.2's predicate references `tsv_version(...)`
+  but §9.1's nine columns contain no version column.** The decision rule is in §F-2.
+- **Do:** assert `tool_version` non-empty, `stack_version` present and non-empty
+  **only**, and `contract_floor`/`contract_target` integers with `floor <= target`.
+  - `tool` is hardcoded `"trusty-installer"` **even when the binary is invoked as
+    `tctl`** — asserting `tool == "tctl"` would fail always.
+  - `stack_version` is a Phase-0 placeholder constant `PHASE0_STACK_VERSION =
+    "0.0.0-scaffold"` (`crates/trusty-installer/src/commands/version.rs:28`). The
+    field is stable; **its value is a stub.** Do not compare it against a release
+    label until the real `stack_version` lands.
+- **Acceptance:** the predicate passes under pattern (c); an injected
+  `contract_floor > contract_target` fixture makes the run exit **60**.
+- **Depends:** P5-T5
+
+### P5-T7 — `verify_daemon_liveness` — and the RC-1 scoping statement
+
+**RC-1 is a scoped-around dependency, not a blocker.** This task states that
+explicitly, in code and in the MANIFEST.
+
+- **Files:** modify `vmtest-harness/lib/verify.sh`.
+- **Contract:** DOC-2 §1.3 (**RC-1**, the four independently-evolved shapes, and
+  the **INTERIM** predicate), §1.4 (the contract-availability table), §10.1
+  (daemon-health poll: 1 s interval, 60 s maximum, **wholly unmeasured**); DOC-1
+  §8.7 (`launchctl bootstrap gui/$(id -u)` works under `tart exec` — no SSH, no GUI
+  login), §7.1.
+- **Do:** implement DOC-2 §1.3's **INTERIM** predicate and nothing stronger: HTTP
+  200, body parses as JSON (`jq -e . >/dev/null`), `.status` a non-empty string,
+  `.status` not one of `{"down","error","unhealthy"}`.
+  - **State the scoping in a header comment on the function**, in these terms: the
+    oracle asserts **liveness only** for daemon health because there is **no shared
+    type in `trusty-common`** and no unified schema — four daemons, four shapes,
+    no field in common beyond `status` and `version`; `trusty-mpm` has **two
+    different `/health` endpoints on two different ports** (the supervisor's at
+    `crates/trusty-mpm/src/supervisor/http.rs:50-53` returns `{"status":"ok"}` and
+    is **not** the daemon health surface); and `trusty-review`'s MCP `review_health`
+    is **not byte-identical** to its HTTP handler — the MCP tool rebuilds the
+    payload as a hand-written `json!` literal
+    (`crates/trusty-review/src/mcp/tools.rs:331-351`) that emits `detail`
+    unconditionally where the HTTP struct omits it via `skip_serializing_if`, and
+    nothing enforces they stay in sync. A strong assertion here would have to be
+    **invented**, and DOC-1 §7.1's whole argument for JSON-only is that the oracle
+    must not depend on surfaces free to change underneath it.
+  - **What would change if RC-1 is ever resolved.** RC-1 asks for one type — the
+    natural home is `trusty-common`, consumed by every daemon's `/health` handler —
+    guaranteeing at minimum `{"status": "ok"|"degraded"|"down", "version":
+    "<semver>", "daemon": "<crate-name>"}`, with per-daemon extras **under a nested
+    object** so the envelope stays stable. On the day that lands, exactly three
+    things change here and nothing else: the INTERIM predicate is replaced by an
+    envelope assertion (`status ∈ {ok, degraded}`, `version` matching the installed
+    version, `daemon` matching the expected crate name); DOC-2 §1.4's third row
+    flips from "**No** — liveness only" to "Yes"; and the 60 s poll maximum stops
+    being a guess because a real time-to-ready can be measured. **No scenario, no
+    transport, and no other oracle function is affected.** That containment is why
+    RC-1 is scoped around rather than waited on.
+  - **See §F-7** — DOC-2 names neither the daemon start mechanism nor how the
+    oracle discovers each daemon's port. The decision rule is there, and it
+    includes an explicit *record-as-blocked-and-skip* branch, so this task cannot
+    strand the phase.
+- **Acceptance:** either the run log shows a liveness result per in-scope daemon
+  (HTTP 200 + parseable JSON + acceptable `.status`), **or** the MANIFEST records
+  `verify_daemon_liveness` as **BLOCKED** with the verbatim reason from §F-7 and
+  the function present but returning 0 with a loud `SKIPPED (RC-1 / §F-7)` log
+  line. A silent skip is not acceptable in either branch.
+- **Depends:** P5-T6
+
+### P5-T8 — Full pattern (c) run; record the first full-stack measurement
+
+- **Files:** modify `vmtest-harness/scenarios/install-local.sh` (complete it to
+  DOC-2 §12.5's full skeleton); modify `vmtest-harness/vmtest.defaults` (timeouts).
+- **Contract:** DOC-2 §12.5 (the complete worked skeleton), §10.2 (watchdog table;
+  "**It should be tightened once the first pattern-(c) full-stack run is timed**");
+  DOC-1 §9 ("The first pattern-(c) full-stack run should be recorded as the
+  replacement measurement"), D4's recorded decision ("the first successful
+  pattern-(c) run must be recorded as the replacement measurement").
+- **Do:** complete the scenario to §12.5 exactly — deliver, install each in-scope
+  crate, N2, then the six verifications. Run it. Time it.
+  - **The 4–8 minute full-stack figure is an extrapolation, computed for six
+    crates against a seven-crate scope, and explicitly lower-confidence since the
+    D2 amendment widened it.** Do not treat your measured number as a confirmation
+    or a refutation of it — it *replaces* it.
+  - Then tighten the `install_timeout` (currently 2700 s, **~5.6× a low-confidence
+    estimate**) to a value grounded in your measurement. DOC-2 §10.2's reasoning is
+    the constraint: a tight timeout over a low-confidence estimate does not enforce
+    a budget, it manufactures flaky failures that get "fixed" by raising the
+    timeout. Leave generous headroom and say what multiple you chose.
+- **Acceptance:** the phase checkpoint's six conditions, verbatim, plus a logged
+  total wall clock recorded in the MANIFEST.
+- **Depends:** P5-T7
+
+### P5-T9 — Update the MANIFEST
+
+- **Files:** modify `docs/research/tart-vm-testing-harness/03-plan/MANIFEST.md`.
+- **Contract:** MANIFEST.md §Schema.
+- **Do:** paste the full checkpoint output; record the full-stack wall clock, the
+  RC-2 observation from P5-T2, and the RC-1 disposition from P5-T7 as
+  Measurements; record every deviation.
+- **Acceptance:** Phase 5 `Observed result` contains the parsed `stack doctor`
+  member list showing `trusty-mpm` present, and `Measurements` contains the
+  full-stack wall clock and the RC-2 exit code.
+- **Depends:** P5-T8
+
+---
+
+## PHASE 6 — Pattern (b): branch
+
+**Goal:** `vmtest run branch` — guest-side `git clone`, checkout, `cargo install
+--path`. **No new infrastructure**, per DOC-1 §10 step 2.
+
+**Checkpoint — PASS CONDITION.**
+
+> `vmtest run branch` **exits 0** with the same twelve-binary and
+> seven-package `stack doctor` assertions as Phase 5, and the run log shows a
+> guest-side `git clone` (no host→guest byte stream) and the checked-out branch
+> name.
+
+### P6-T1 — `source_deliver_branch`
+
+- **Files:** modify `vmtest-harness/lib/source.sh`.
+- **Contract:** DOC-2 §12.2 (`source_deliver_branch <vm_name> <repo_url> <branch>
+  <guest_dir>`, dies 50), §10.2 (guest `git clone` watchdog **300 s**, grounded in
+  the measured `GIT_CLONE_MS=50131`), §8.2 (`repo_url`, `default_branch`); DOC-1
+  §6.2.
+- **Do:** the guest clones directly — **the repo is public, so no credential
+  plumbing is needed**, and **no host→guest source transfer occurs; the host
+  repository is not read at all** under this pattern. Check out the target branch.
+- **Acceptance:** the run log shows the clone duration and the resolved commit SHA;
+  `grep -c 'streamed' ` in the log is **0** (nothing was streamed); the guest tree
+  exists at `guest_src_dir`.
+- **Depends:** P5-T9
+
+### P6-T2 — `scenarios/install-branch.sh`
+
+- **Files:** create `vmtest-harness/scenarios/install-branch.sh`.
+- **Contract:** DOC-2 §12.5 (same shape, different step 1), §12.1, §12.4; DOC-1
+  §3.6, §6.5 (**`tctl install` MUST NOT be used in patterns (b) or (c)** — the
+  prohibition applies here identically).
+- **Do:** copy the pattern-(c) scenario, replace step 1 with
+  `source_deliver_branch`, and pass `b` to every `verify_*` call. **This is the
+  proof that the scenario abstraction holds:** if this file needs anything other
+  than a different step 1 and a different pattern letter, the abstraction leaked
+  and that is a finding to record.
+- **Acceptance:** `diff` between the two scenario files shows differences **only**
+  in the function name, step 1, and the pattern letter.
+- **Depends:** P6-T1
+
+### P6-T3 — Branch selection
+
+- **Files:** none (documentation of the mechanism in the scenario header comment).
+- **Contract:** DOC-2 §8.2 (mechanical override mapping: uppercase the key, prefix
+  `VMTEST_`; **CLI flags exist only for the five listed**).
+- **Do:** the branch under test is selected by `VMTEST_DEFAULT_BRANCH=<branch>`,
+  derived mechanically from the `default_branch` key. **Do not add a `--branch`
+  flag** — §8.2 is explicit that adding a flag per tunable would give the driver a
+  surface larger than its behaviour, and the mechanical mapping already covers this
+  case without a table to maintain.
+- **Acceptance:** `VMTEST_DEFAULT_BRANCH=main vmtest run branch --dry-run` reports
+  `default_branch main (env)` in the effective-configuration banner.
+- **Depends:** P6-T2
+
+### P6-T4 — Run the checkpoint
+
+- **Files:** none.
+- **Contract:** DOC-2 §1.1, §9.3; DOC-1 §7.5.
+- **Do:** run `vmtest run branch` end to end. Record the wall clock and compare it
+  to Phase 5's — the delta is approximately the difference between the streamed
+  transport and a guest-side clone (measured 50.131 s), which is itself worth
+  recording since it is the first side-by-side comparison of the two transports.
+- **Acceptance:** the phase checkpoint, verbatim.
+- **Depends:** P6-T3
+
+### P6-T5 — Update the MANIFEST
+
+- **Files:** modify `docs/research/tart-vm-testing-harness/03-plan/MANIFEST.md`.
+- **Contract:** MANIFEST.md §Schema.
+- **Do:** state, observed result, files delivered, deviations, and the
+  transport-comparison measurement.
+- **Acceptance:** Phase 6 `Observed result` includes the clone SHA and the total
+  wall clock alongside Phase 5's for comparison.
+- **Depends:** P6-T4
+
+---
+
+## PHASE 7 — Pattern (a): released
+
+**Goal:** `vmtest run released` — `cargo install <package> --locked` from
+crates.io for **all seven** crates. **Adds a scenario only**, per DOC-1 §10 step 3
+as amended.
+
+**This is where the D2/D3 reversal is proved.** Under the superseded D2 this
+pattern covered six crates and asserted `tm` known-absent. It now covers seven and
+asserts `tm` **present**. A run that does not find `tm` is a **failure**.
+
+**Checkpoint — PASS CONDITION.**
+
+> `vmtest run released` **exits 0**, and the run log shows seven
+> `cargo install ... --locked` invocations — including **`cargo install tga
+> --locked`** and **`cargo install trusty-mpm --locked`** — followed by
+> `verify_binaries` reporting **12/12 present**, with `tm` and `trusty-mpm`
+> explicitly among them, and `tctl stack doctor --json` reporting `trusty-mpm` as
+> installed.
+
+### P7-T1 — `install_from_registry`
+
+- **Files:** modify `vmtest-harness/lib/source.sh`.
+- **Contract:** DOC-2 §12.2 (`install_from_registry <vm_name> <package>
+  [version]`, dies 50), §9.2 (`[package] name` is the key, and it is *"what `cargo
+  install <name> --locked` takes, which is pattern (a)'s entire interface"*);
+  DOC-1 §6.3, D1, D3.
+- **Do:** `cargo install <package> --locked`. **`--locked` is mandatory** — it is
+  what makes the run reproducible against the published lockfile rather than
+  against whatever the resolver feels like today.
+  - **`trusty-git-analytics` publishes as `tga`.** The install command is `cargo
+    install tga --locked`. Drive the package list from
+    `tsv_scope_packages` (P4-T4), **not** from directory names — that is exactly
+    the discontinuity DOC-1 D3 warns about, and keying on package name is why the
+    TSV is shaped the way it is.
+  - **Pattern (a) means crates.io and nothing else** (DOC-1 D1). `install.sh` and
+    prebuilt release tarballs are out of scope; the crates.io path is the only one
+    grounded in measurement (`cargo install tga --locked`, 131 s, 211 deps, 4 vCPU).
+- **Acceptance:** the run log shows seven `cargo install <pkg> --locked` lines
+  whose package names are exactly `tsv_scope_packages`' seven values, `tga` among
+  them.
+- **Depends:** P6-T5
+
+### P7-T2 — `scenarios/install-released.sh`
+
+- **Files:** create `vmtest-harness/scenarios/install-released.sh`.
+- **Contract:** DOC-2 §12.2 (`source_deliver_released` — "no-op returning 0;
+  pattern (a) has no delivery step; **exists so scenarios stay symmetric**"),
+  §12.5; DOC-1 §3.6, §6.3.
+- **Do:** step 1 calls the no-op; steps 2–4 install from the registry and verify
+  with pattern letter `a`. Keep the call to `source_deliver_released` even though
+  it does nothing — symmetry across the three scenario files is what makes the
+  upgrade-testing extension (DOC-1 §12.1) *"two install steps in one scenario file,
+  and not a new mechanism"*.
+  - Even though `tctl install` would, in pattern (a) alone, do roughly what this
+    pattern specifies, **the harness invokes `cargo install` directly** so that all
+    three patterns share one install mechanism and differ **only in source**
+    (DOC-1 §6.5).
+- **Acceptance:** the three scenario files differ only in name, step 1, and pattern
+  letter; `vmtest run released` dispatches to this file.
+- **Depends:** P7-T1
+
+### P7-T3 — Pattern-(a) relaxation in `verify_versions`
+
+- **Files:** modify `vmtest-harness/lib/verify.sh`.
+- **Contract:** DOC-2 §1.2 (`tool_version` asserted equal to the expected version
+  under patterns (b)/(c); **asserted merely present under pattern (a), where the
+  published version legitimately differs from the working tree**). Interacts with
+  **§F-2**.
+- **Do:** gate the equality clause on `pattern ∈ {b, c}`. This is the one place
+  the oracle is genuinely pattern-aware today, and it is a real difference, not a
+  vestige.
+- **Acceptance:** with a working tree whose `trusty-installer` version differs from
+  the published one, `vmtest run released` still passes `verify_versions`, while
+  `vmtest run local` would fail if the equality clause were applied.
+- **Depends:** P7-T2
+
+### P7-T4 — Run the checkpoint and prove the reversal
+
+- **Files:** none.
+- **Contract:** DOC-1 D2 (as amended), D3, §7.5 (as amended); DOC-2 §9.5.
+- **Do:** run `vmtest run released`. Explicitly confirm in the log that `tm` and
+  `trusty-mpm` are **present**, and that `tctl stack doctor --json` reports
+  `trusty-mpm` with `on_path == true` and `version != null`.
+  - If `cargo install trusty-mpm --locked` fails because the crate is **not** on
+    crates.io, that contradicts two independent pieces of evidence (`cargo search
+    trusty-mpm` returning `1.0.2`, and a manifest with no `publish` key). **Record
+    it verbatim and stop** — it would mean D2 was reversed on a bad reading, which
+    is a design-level finding, not a harness bug to work around.
+- **Acceptance:** the phase checkpoint, verbatim.
+- **Depends:** P7-T3
+
+### P7-T5 — Update the MANIFEST
+
+- **Files:** modify `docs/research/tart-vm-testing-harness/03-plan/MANIFEST.md`.
+- **Contract:** MANIFEST.md §Schema.
+- **Do:** paste the checkpoint output, with the `tm` / `trusty-mpm` lines called
+  out as the evidence that closes the D2 reversal loop.
+- **Acceptance:** Phase 7 `Observed result` contains the `cargo install trusty-mpm
+  --locked` line and the `stack doctor` member entry for `trusty-mpm`.
+- **Depends:** P7-T4
+
+---
+
+## PHASE 8 — Hardening, documentation, and measurement write-back
+
+**Goal:** close the loop — prove the isolation discipline holds, tighten what the
+new measurements allow, document the harness for a human, and write the
+measurements back into DOC-1/DOC-2 so the doc set stops carrying estimates it can
+now replace.
+
+**Checkpoint — PASS CONDITION.**
+
+> All four hold: (i) the `~/.zshenv` deletion drill passes — every assertion still
+> passes with the file removed mid-run; (ii) `vmtest.defaults` timeouts are
+> grounded in Phase 5–7 measurements, each with a comment naming the measurement;
+> (iii) `vmtest-harness/README.md` exists and a reader who has never seen the doc
+> set can run `vmtest run local` from it alone; (iv) `git grep -n 'publish = false'
+> docs/research/tart-vm-testing-harness/` returns **no** claim that `trusty-mpm` is
+> unpublished.
+
+### P8-T1 — The `~/.zshenv` deletion drill
+
+- **Files:** none (a deliberate one-off run; record the result).
+- **Contract:** DOC-2 §11.4 (*"If `~/.zshenv` were deleted from the guest mid-run,
+  every harness assertion must still pass — that is the test of whether §7 was
+  implemented correctly, and it is worth running once deliberately"*); DOC-1 §5.3.
+- **Do:** run `vmtest run local` with a deliberate `rm ~/.zshenv` in the guest
+  after provisioning and before the install steps.
+- **Acceptance:** the run exits **0** with all assertions passing. If it does not,
+  something reads an rc file, and §7's self-prefixing was **not** implemented
+  correctly — fix that before anything else in this phase. This is the single
+  highest-value hardening check in the plan, because the failure it catches (a
+  missing dotfile presenting as "cargo is not installed", exit 127) is documented
+  as having already broken a golden image once.
+- **Depends:** P7-T5
+
+### P8-T2 — Ground the timeouts in measurement
+
+- **Files:** modify `vmtest-harness/vmtest.defaults`.
+- **Contract:** DOC-2 §10.2 (watchdog table and its stated multiples), §10.1 (poll
+  table), open items ("**Full-stack watchdog is 5.6× a low-confidence estimate** —
+  tighten once the first pattern-(c) full-stack run is timed"; "**Daemon
+  time-to-ready** — wholly unmeasured; the 60 s maximum is a guess").
+- **Do:** replace estimate-derived values with measurement-derived ones, and put
+  the measurement in a comment beside each. Where a value is still a guess — and
+  the daemon-health 60 s maximum will still be one unless P5-T7 produced a real
+  number — **say so in the comment**. A tunable whose comment claims a grounding it
+  does not have is worse than an unlabelled guess.
+- **Acceptance:** every timeout key in `vmtest.defaults` carries a comment that is
+  either a `file:line` measurement citation or the literal word `judgment call`.
+- **Depends:** P8-T1
+
+### P8-T3 — `vmtest-harness/README.md`
+
+- **Files:** create `vmtest-harness/README.md`.
+- **Contract:** DOC-1 §3.1 (driver surface), §2 (placement rationale), §11
+  (isolation guarantee), §13 (non-goals); DOC-2 §2 (exit codes), §3.4 (**the
+  pin-roll procedure — reproduce its six steps**), §5 (`clean`).
+- **Do:** document the three subcommands, the exit-code table, the config tiers,
+  the pin-roll procedure, and — prominently — the two rules a future contributor is
+  most likely to break: **`lib/vm.sh` is the only file that may contain `tart`**,
+  and **the host repo is never mounted in either direction**.
+  - Reproduce §3.4's rule that **a pin roll is a deliberate act with its own PR and
+    is never a repair step inside a failing run**, and that **all three scenarios
+    must be green against the candidate before the PR opens** — a roll validated
+    against one pattern is not validated.
+  - Include §3.4 step 5: re-verify §11's preinstalled-tool assumptions explicitly.
+    A new base image is precisely where a preinstalled `mise` could move,
+    disappear, or gain a second copy.
+  - Record the **microphone TCC caveat** (DOC-1 §14): `kTCCServiceAudioCapture`
+    fires **on VM start even with `--no-graphics`** — a property of
+    Virtualization.framework, not of Tart and not of this harness — and **all** TCC
+    observations in the research are conditional on having been run from iTerm2, by
+    one user, on one machine. A LaunchAgent, a cron job, or a different terminal is
+    a **different responsible process and may prompt**. The harness cannot promise
+    unattended operation in a launch context that has not previously been granted.
+- **Acceptance:** a reader following only the README can run `vmtest run local`
+  successfully on a clean machine (test this by following it literally, not from
+  memory).
+- **Depends:** P8-T2
+
+### P8-T4 — Write the measurements back into the doc set
+
+- **Files:** modify `docs/research/tart-vm-testing-harness/02-design/01-vm-install-harness.md`
+  (§9, §14) and `.../02-design/02-harness-contracts.md` (open items, §10.2).
+- **Contract:** DOC-1 §9 (*"The first pattern-(c) full-stack run should be recorded
+  as the replacement measurement"*), §14 (the transport gap); DOC-2 open items.
+- **Do:** as **amendments in the doc set's established style** — dated, stating
+  what changed and why, never a silent edit (*"a design whose decisions quietly
+  change is a design nobody can audit"*): replace the 4–8 min extrapolation with
+  the measured full-stack time; close DOC-1 §14's tar-transport gap with the
+  Phase 1 and Phase 5 evidence; close the "full base-image digest" open item with
+  P1-T3's value; update RC-2's status with P5-T2's observation. **Leave RC-1
+  open** — it is not this plan's to close.
+- **Acceptance:** `git diff` on the two design docs shows dated amendment
+  blockquotes, and no measurement in DOC-1 §9 is labelled EXTRAPOLATION that now
+  has a real number.
+- **Depends:** P8-T3
+
+### P8-T5 — Fix the stale `02-design/README.md` summary
+
+- **Files:** modify `docs/research/tart-vm-testing-harness/02-design/README.md`.
+- **Contract:** DOC-1 D2 (as amended), D3; DOC-2 §9.5.
+- **Do:** `02-design/README.md` ("The short version") still reads *"Seven crates in
+  scope; `trusty-mpm` is a documented gap in pattern (a) only (`publish = false`)"*.
+  That is the **superseded** premise and it survives in the index because the
+  reversal amended DOC-1 and DOC-2 but not their README. It is the first thing a
+  zero-context engineer reads. Correct it to state that pattern (a) covers all
+  seven crates and that `trusty-mpm` is published at v1.0.2.
+  - This is flagged as a **known doc defect**, not discovered during
+    implementation; it is listed in §F-8 so it cannot be lost if Phase 8 is
+    deferred.
+- **Acceptance:** `git grep -n 'publish = false'
+  docs/research/tart-vm-testing-harness/` returns no line claiming `trusty-mpm` is
+  unpublished; the README's short version says seven crates in all three patterns.
+- **Depends:** —
+
+### P8-T6 — Update the MANIFEST (final)
+
+- **Files:** modify `docs/research/tart-vm-testing-harness/03-plan/MANIFEST.md`.
+- **Contract:** MANIFEST.md §Schema.
+- **Do:** record Phase 8, then add a closing `Plan status` line stating whether all
+  eight phases are complete and listing every item still open (RC-1 at minimum, and
+  RC-2 if P5-T2 left it open).
+- **Acceptance:** every phase row in the summary table has a non-`not-started`
+  state; the `Plan status` line names RC-1 explicitly.
+- **Depends:** P8-T4, P8-T5
+
 <!-- APPEND-POINT -->
