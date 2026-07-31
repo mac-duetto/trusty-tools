@@ -105,7 +105,7 @@ measurements, one pinned digest, and the knowledge that the pipeline works.
 
 **(b) reuses (c)'s scaffolding with no new mechanism** — guest-side `git clone`
 (the repo is public, DOC-1 §6.2) plus the same `cargo install --path` install step
-(DOC-2 §12.2 `install_from_branch`/`install_from_path`). Its transport is the one
+(DOC-2 §12.2 `source_deliver_branch` + `install_from_path`). Its transport is the one
 that *was* measured, which is also why DOC-1 D4 names it the fallback if (c)'s
 transport does not work.
 
