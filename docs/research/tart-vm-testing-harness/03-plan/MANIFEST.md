@@ -229,10 +229,11 @@ not been completed is not complete, regardless of what its code does.
   replaces DOC-1 §9's 4–8 min extrapolation; **RC-2's observed exit code and
   stderr** from P5-T2; the RC-1 / §F-7 daemon-liveness disposition)*
 - **Deviations from plan:** None. *(Expected entries: §F-7 daemon start and port
-  discovery, including the BLOCKED branch if it fires; the fourth
-  `verify_single_install` call for `trusty-mpm`, which is a plan-level judgment call
-  beyond DOC-2 §12.5's skeleton. §F-2's `tsv_version` contradiction is **no longer a
-  deviation to record** — DOC-2 §1.2 was amended at source on 2026-07-31.)*
+  discovery, including the BLOCKED branch if it fires. The fourth
+  `verify_single_install` call for `trusty-mpm` is **no longer a deviation to
+  record** — DOC-2 §12.5's skeleton was amended at source on 2026-07-31 and carries
+  it. Neither is §F-2's `tsv_version` contradiction — DOC-2 §1.2 was amended at
+  source on the same date.)*
 - **Tasks:** — none complete *(P5-T1 … P5-T9)*
 
 ## Phase 6 — Pattern (b): branch

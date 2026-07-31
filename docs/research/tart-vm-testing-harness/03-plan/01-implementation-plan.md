@@ -906,8 +906,10 @@ and its differ before anything asserts against it.
 - **Files:** possibly modify `vmtest-harness/expected-binaries.tsv`; modify
   MANIFEST.
 - **Contract:** DOC-2 §9.3, §9.6.
-- **Do:** DOC-2's seed was enumerated on 2026-07-31 (26 explicit `[[bin]]` targets
-  across 20 manifests, plus one implicit). If `--check-table` reports findings on
+- **Do:** DOC-2's seed was enumerated on 2026-07-31 (**27** explicit `[[bin]]`
+  targets across 20 manifests, plus one implicit — **28** rows; the count was
+  corrected from 26 in DOC-2 §9.3 on the same date, the table itself having always
+  been right). If `--check-table` reports findings on
   the unmodified workspace, the workspace has moved since. **Record every finding
   verbatim in the MANIFEST**, then apply the human edit — adding a genuinely new
   binary with `in_scope=no` unless it belongs to one of D3's seven packages, in
@@ -1110,9 +1112,11 @@ DOC-2 §6.2 deliberately leaves N2's predicate weak because the code at
     seed table, this gate earns its separate existence.
   - `trusty-mpm` gets a `verify_single_install` call too — it ships **two**
     binaries, `tm` and `trusty-mpm`, and under the D2 reversal both are expected
-    present under every pattern (§A.1). DOC-2 §12.5's skeleton predates the
-    reversal in this respect; adding the fourth call is consistent with §7.4 and is
-    a **plan-level judgment call**, recorded here as one.
+    present under every pattern (§A.1). **This is no longer a plan-level judgment
+    call: DOC-2 §12.5's skeleton was amended at source on 2026-07-31 and now
+    carries the fourth call itself.** The rule the amendment states is the one to
+    implement — *every multi-binary in-scope package gets a call*, and there are
+    four of them.
 - **Acceptance:** `verify_binaries` logs `12/12 present`; four
   `verify_single_install` calls pass; deliberately renaming
   `~/.cargo/bin/trusty-memory-mcp-bridge` in the guest makes the run exit **60**

@@ -1055,9 +1055,20 @@ which is a further argument for keying on package name.
 
 #### 9.3 Seed content
 
-Enumerated from the workspace manifests. 26 explicit `[[bin]]` targets across 20
-manifests, plus one implicit target (§9.4). Twelve rows are in scope; DOC-1 D3's
-seven crates produce twelve binaries, not seven.
+Enumerated from the workspace manifests. **27** explicit `[[bin]]` targets across 20
+manifests, plus one implicit target (§9.4) — **28** rows in total. Twelve rows are
+in scope; DOC-1 D3's seven crates produce twelve binaries, not seven.
+
+> **Correction, 2026-07-31 — the explicit count read 26.** The prose said "26
+> explicit … plus one implicit", i.e. 27, while the block below it has always had
+> **28** rows. Re-enumerated: `grep -c '^\[\[bin\]\]'` over every `Cargo.toml` under
+> `crates/` yields **27** across 20 manifests — 26 of them in the 19 top-level
+> `crates/*/Cargo.toml` manifests, plus one in the non-glob path member
+> `crates/trusty-agents/ui/src-tauri/Cargo.toml`. That twentieth manifest is the
+> same one §9.2 and §9.6 both single out as the reason to key on package name and
+> to read `cargo metadata` rather than a `crates/*/Cargo.toml` glob; the prose
+> counted the manifest but not its target. "20 manifests" was right; only the target
+> total was wrong, and the table was right all along.
 
 ```
 package	crate_dir	binary	bin_path	req_features	in_scope	expect_a	expect_b	expect_c
@@ -1696,11 +1707,23 @@ scenario_install_local() {
     verify_single_install  "$VMTEST_VM" trusty-search      # DOC-1 §7.4
     verify_single_install  "$VMTEST_VM" trusty-memory      # 3 binaries — §9.3
     verify_single_install  "$VMTEST_VM" trusty-installer
+    verify_single_install  "$VMTEST_VM" trusty-mpm         # 2 binaries — added 2026-07-31
     verify_stack_doctor    "$VMTEST_VM" c                  # §1.1
     verify_versions        "$VMTEST_VM" c                  # §1.2
     verify_daemon_liveness "$VMTEST_VM" c                  # §1.3 interim, pending RC-1
 }
 ```
+
+> **Amendment, 2026-07-31 — the fourth `verify_single_install` call was missing.**
+> The skeleton gated `trusty-search`, `trusty-memory`, and `trusty-installer` but
+> not `trusty-mpm`, which ships **two** binaries (`tm` and `trusty-mpm`, §9.3).
+> Four in-scope packages are multi-binary and only three were gated, so the one
+> whose rows the D2 reversal had just changed was the one left ungated. The
+> omission is the §7.4 failure mode reached by yet another route: `verify_binaries`
+> would still find both `trusty-mpm` binaries, so nothing would go red, but nothing
+> would have asserted that **one** `cargo install trusty-mpm` is what produced
+> them. Every multi-binary in-scope package now gets a call; single-binary packages
+> do not need one, because for them `verify_binaries` already is the whole claim.
 
 Note what the skeleton does **not** contain: no `tart`, no `PATH`, no timeout, no
 exit code, no `if` around a lib call. Every one of those lives in a `lib/` module or
