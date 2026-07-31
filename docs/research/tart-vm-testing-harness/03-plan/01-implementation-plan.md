@@ -970,11 +970,30 @@ and its differ before anything asserts against it.
 
 - **Files:** modify `vmtest-harness/vmtest` (or `lib/verify.sh`, per §F-5).
 - **Contract:** DOC-2 §12.5 (calls `tsv_scope_crate_dirs`, "column 2 where
-  in_scope=yes"), §9.1, §9.3. **See §F-3** — the thirteen in-scope rows contain only
-  **eight** distinct `crate_dir` values, so the helper must deduplicate.
+  in_scope=yes"), §9.1, §9.3. **See §F-3 (RESOLVED)** — the thirteen in-scope rows
+  contain only **eight** distinct `crate_dir` values, so the helper must
+  deduplicate. Read §F-3 for *why*: not because an undeduped loop would invalidate
+  the Single-Install gate (it would not — that claim was false and is corrected
+  there), but because the P5 checkpoint counts installs and repeats are waste.
 - **Do:** implement `tsv_scope_crate_dirs` (unique `crate_dir`, in first-appearance
   order), `tsv_scope_packages` (unique `package`), and `tsv_expect <package>
   <binary> <pattern>`. Apply §F-3's decision rule.
+  - **`tsv_scope_crate_dirs` asserts its own postcondition before emitting.** Two
+    lines of bash, and they turn every possible undedupe variant — a dropped
+    `sort -u`, an `awk` seen-map that forgets to set its key, a refactor that
+    reorders the pipeline — from a silent behaviour change into a classified
+    failure at the point of the defect:
+
+    ```sh
+    _dups=$(printf '%s\n' "$_dirs" | sort | uniq -d)
+    [ -z "$_dups" ] || die 60 "tsv_scope_crate_dirs emitted duplicates: $(printf '%s' "$_dups" | tr '\n' ' ')"
+    ```
+
+    It dies **60** (verification, DOC-2 §2) and **names the duplicated values**,
+    because "a directory appeared twice" is unactionable without knowing which. A
+    function whose entire contract is *unique* values should not rely on a caller
+    to notice when it stops delivering them — and this one runs on the host, with
+    no VM, so the failure arrives seconds into a run rather than minutes.
 - **Acceptance — order-free, and derived.** Every count below is stated as a
   derivation with today's value as the expected literal:
   - `tsv_scope_crate_dirs | wc -l` equals the number of **distinct `crate_dir`
@@ -1311,6 +1330,25 @@ explicitly, in code and in the MANIFEST.
     crates against what is now an eight-crate scope, and explicitly lower-confidence
     since the D2 and D3 amendments each widened it without re-deriving it.** Do not treat your measured number as a confirmation
     or a refutation of it — it *replaces* it.
+  - **Assert the install loop ran exactly once per emitted `crate_dir`.** The
+    scenario counts its own canonical `install_from_path` log lines and requires
+    equality with the helper's output — the run-level counterpart to P4-T4's
+    host-level tripwire, catching an undedupe that enters *between* the helper and
+    the loop (a `for` rewritten over rows instead of directories, a retry that
+    re-enters, a second install block added for an upgrade scenario and left in):
+
+    ```sh
+    _expected=$(tsv_scope_crate_dirs | wc -l | tr -d ' ')
+    _actual=$(grep -c '^vmtest: install_from_path ' "$VMTEST_RUNDIR/run.log")
+    [ "$_actual" = "$_expected" ] || die 60 "install ran $_actual times, expected $_expected (one per crate_dir)"
+    printf '%s\n' "$_installed_dirs" | sort | uniq -d | grep -q . && die 60 "a crate_dir was installed twice"
+    ```
+
+    Two lines of substance on top of P4-T4's two. Note what this does **not** claim
+    to be: it is a **loudness** guarantee, not a correctness one. Per §F-3 as
+    corrected, an undeduped loop does not produce a wrong end state — it produces a
+    count mismatch, which is precisely what this makes fail fast and by name instead
+    of hiding in minutes of duplicate build output.
   - Then tighten the `install_timeout` (currently 2700 s, **~5.6× a low-confidence
     estimate**) to a value grounded in your measurement. DOC-2 §10.2's reasoning is
     the constraint: a tight timeout over a low-confidence estimate does not enforce
@@ -1670,10 +1708,13 @@ decision rule says **stop and record**, not **choose something**.
 > Honest uncertainty is this doc set's established register. A plan that silently
 > filled these gaps would read more confident and be worth less.
 
-**Ten items were flagged. Three — §F-2, §F-8, §F-9 — were RESOLVED at source on
-2026-07-31 by amending DOC-2 and the design README rather than leaving them for the
+**Ten items were flagged. Four — §F-2, §F-3, §F-8, §F-9 — are RESOLVED, each on
+2026-07-31, by amending DOC-2 and the design README rather than leaving them for the
 executing engineer, because each was a defect with a determinable answer rather than
-a genuine unknown. Seven remain open.** The resolved three are retained below with
+a genuine unknown. Six remain open.** §F-3 is the newest of the four and the odd one
+out: its *decision* was right from the start and is unchanged, but its *rationale*
+was factually false, and the correction is what closes it — see §F-3 for both the
+false claim and the empirical result that disproves it. The resolved three are retained below with
 their original statement of the problem and the amendment that closed it: this doc
 set records reversals rather than making silent edits, and an engineer who reads a
 stale copy of DOC-2 needs to be able to tell which is which.
@@ -1716,26 +1757,70 @@ stale copy of DOC-2 needs to be able to tell which is which.
 - **What the engineer does now:** implement the amended predicate. There is no
   decision left to make and nothing to record as a deviation.
 
-### §F-3 — The thirteen in-scope rows contain only eight distinct crate directories
+### §F-3 — The thirteen in-scope rows contain only eight distinct crate directories — **decision unchanged; rationale CORRECTED 2026-07-31**
 
 - **Where:** DOC-2 §12.5's skeleton loops `for _dir in $(tsv_scope_crate_dirs)` —
   "column 2 where in_scope=yes" — and calls `install_from_path` once per value.
   There are **thirteen** such rows and **eight** distinct directories:
   `trusty-search` appears twice, `trusty-memory` three times, `trusty-installer`
-  twice, `trusty-mpm` twice, and four crates once each. **DOC-2 never says
-  "deduplicate" in those words** — see below for the four places it says it in
-  other words.
-- **Why it matters:** taken literally, the scenario runs `cargo install --path` on
-  `trusty-memory` three times. Under a shared `CARGO_TARGET_DIR` the repeats are
-  mostly cheap, but they are minutes of confusing duplicate log output, and they
-  make the Single-Install Convention gate (DOC-1 §7.4) meaningless — installing a
-  crate once per sidecar cannot prove that installing it *once* yields all of them.
-- **Decision rule (forced by DOC-1 §7.4):** deduplicate. `tsv_scope_crate_dirs`
-  emits **unique** `crate_dir` values in first-appearance order, and each in-scope
-  crate is installed exactly once. The gate's entire claim is that one install
-  yields every sidecar, so installing more than once would invalidate the
-  assertion it feeds.
-- **Record:** MANIFEST Phase 4 Deviations.
+  twice, `trusty-mpm` twice, and four crates once each.
+- **On "DOC-2 never says to deduplicate" — technically true, materially
+  misleading.** *(Corrected 2026-07-31.)* DOC-2 never uses the word, but it implies
+  the requirement in **four** separate places, and an engineer reading any of them
+  would arrive at it: §12.5's own loop comment says "Install each in-scope
+  **crate**" (not *each row*, not *each binary*); §9.2 declares the composite key to
+  be `(package, binary)` and `crate_dir` explicitly **not** a key, which is what
+  makes repeats in that column expected rather than anomalous; §9.1 ties `crate_dir`
+  to `cargo install --path`, which takes a directory; and DOC-1 §7.4 states the
+  convention in terms of one install per crate. The gap is that no single sentence
+  says it imperatively — worth flagging, but this is a **weak** flag, not a hole.
+- **Why it matters — CORRECTED. The original reasoning here was false.** This entry
+  previously claimed the undeduped loop "makes the Single-Install Convention gate
+  (DOC-1 §7.4) meaningless — installing a crate once per sidecar cannot prove that
+  installing it *once* yields all of them." **That is wrong, and it was disproven
+  empirically.** Repeated `cargo install --path <dir>` reinstalls the package's
+  **full binary set** every time — cargo prints `Replacing …` for **every** binary
+  the package declares, exits 0, and on a freshness hit completes in ~0.02 s. The
+  end state after three `trusty-memory` installs is **identical** to the end state
+  after one: all three sidecars present, installed by a package-granular command.
+  The gate's claim therefore **survives** an undeduped loop intact. Reasoning from
+  a plausible-sounding mechanism instead of running the command is how the wrong
+  rationale got written, and it is recorded rather than quietly swapped because a
+  correct decision resting on a false premise is one refactor away from being
+  reversed for the wrong reason.
+- **What the undedupe actually costs.** Two things, both **loud**:
+  1. **A P5-checkpoint mismatch.** The checkpoint requires one `cargo install
+     --path` per `tsv_scope_crate_dirs` value; an undeduped loop emits thirteen
+     install lines against eight directories and **fails the checkpoint by count**.
+     P5-T8's tripwire makes that failure immediate and named.
+  2. **Redundant `tart exec` round-trips** and minutes of confusing duplicate log
+     output.
+  A loud smell and a wasted round-trip — **not** a silent failure, and **not** a
+  false pass. It is a real defect worth preventing; it is not the catastrophe the
+  original text described.
+- **The genuine hazard this flag should point at is a *per-binary* install.** The
+  gate **is** defeated — silently, and with a green result — by `cargo install
+  --path <dir> --bin <binary>`, which is what a "row-faithful" reading of the TSV
+  invites. That installs each sidecar *by name*, so `verify_binaries` and every
+  `verify_single_install` pass while nothing has tested the convention at all.
+  **That is now explicitly prohibited** in DOC-2 §12.2 (amended 2026-07-31) and
+  mirrored in P5-T1. Unlike the undedupe, it produces no count mismatch and no
+  smell, and `--check-table` cannot catch it because the table is not what is wrong.
+- **Decision rule (unchanged — it was correct):** deduplicate.
+  `tsv_scope_crate_dirs` emits **unique** `crate_dir` values in first-appearance
+  order, and each in-scope crate is installed exactly once. Only the justification
+  changes: dedupe because the checkpoint counts installs and because thirteen
+  installs of eight crates is waste and noise — **not** because the gate would
+  otherwise be invalid.
+- **Why this is no longer open.** Three things closed it, and none of them is a
+  judgment the executing engineer has to make: DOC-2's four implicit statements are
+  now catalogued above; the **real** bypass is prohibited at source (§12.2); and
+  P4-T4's acceptance already catches an undeduped helper **on the host, before any
+  VM boots**, with P5-T8 catching it again at run level. There is no decision left
+  and nothing to record as a deviation.
+- **Record:** nothing. *(Previously "MANIFEST Phase 4 Deviations" — no longer a
+  deviation, because dedupe is what the plan specifies and the tripwires enforce
+  it.)*
 
 ### §F-4 — The negative-probe functions have no assigned module
 

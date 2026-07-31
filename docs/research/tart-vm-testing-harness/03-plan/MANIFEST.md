@@ -205,8 +205,10 @@ not been completed is not complete, regardless of what its code does.
 - **Observed result:** — not run
 - **Files delivered:** — none
 - **Measurements:** — none
-- **Deviations from plan:** None. *(Expected entries: §F-3 deduplication; any
-  workspace drift from DOC-2 §9.3's seed found by P4-T3.)*
+- **Deviations from plan:** None. *(Expected entry: any workspace drift from DOC-2
+  §9.3's seed found by P4-T3. **§F-3 deduplication is no longer a deviation to
+  record** — it was resolved on 2026-07-31: the decision was always right, its
+  rationale was corrected, and P4-T4's and P5-T8's tripwires now enforce it.)*
 - **Tasks:** — none complete *(P4-T1 … P4-T5)*
 
 ## Phase 5 — Pattern (c) complete: install steps, N2, and the full oracle
@@ -315,7 +317,8 @@ A future agent picking this up, in order:
    so the scope is **eight** crates and **thirteen** in-scope binaries (plan §A.1b).
    A doc that says "seven" is recording the state between the two amendments.
 2. Read [the plan](./01-implementation-plan.md), including **§F** — the flagged
-   under-specifications and their decision rules. If you hit a decision the plan
+   under-specifications and their decision rules. **Ten were flagged; four (§F-2,
+   §F-3, §F-8, §F-9) are resolved and six remain open.** If you hit a decision the plan
    and DOC-2 do not settle and §F does not cover, **stop and record it here**
    rather than inventing a contract.
 3. Read this file's summary table. Start at the first phase that is not `complete`.
