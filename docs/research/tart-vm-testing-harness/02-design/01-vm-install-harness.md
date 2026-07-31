@@ -568,12 +568,26 @@ binaries that install must produce:
 | Crate | Expected binaries |
 |---|---|
 | `trusty-search` | `trusty-search`, `trusty-embedderd` |
-| `trusty-memory` | `trusty-memory`, `trusty-bm25-daemon` |
+| `trusty-memory` | `trusty-memory`, `trusty-bm25-daemon`, `trusty-memory-mcp-bridge` |
 | `trusty-installer` | `trusty-installer`, `tctl` |
 | `trusty-code` | `tcode` |
 | `trusty-analyze` | `trusty-analyze` |
 | `tga` | `tga` |
 | `trusty-mpm` | `tm`, `trusty-mpm` |
+
+> **Amendment, 2026-07-31 — third `trusty-memory` sidecar added.** The row above
+> originally listed two binaries and **omitted `trusty-memory-mcp-bridge`**.
+> `crates/trusty-memory/Cargo.toml` declares **three** `[[bin]]` targets:
+> `trusty-memory` (`src/main.rs`), `trusty-bm25-daemon` (`src/bin/bm25_daemon.rs`),
+> and `trusty-memory-mcp-bridge` (`src/bin/mcp_bridge.rs`) — the last a deprecation
+> shim for pre-#914 users — with a manifest comment stating that `cargo install
+> trusty-memory` "produces all three binaries in one command". The omission was
+> found by enumerating the manifests for
+> [DOC-2 §9.3](./02-harness-contracts.md), whose seed table already carries the
+> third row; this amendment brings DOC-1 into line with it. The same omission
+> exists upstream in the project's Single-Install sidecar inventory checklist
+> (`.claude-mpm/INSTRUCTIONS.md`), which is the likely origin of the error and is
+> corrected in the same PR.
 
 **Why a table and not the documentation:** `docs/reference/release-workflow.md`
 (~lines 450–460) is **stale** with respect to `trusty-console`. Asserting against
@@ -609,12 +623,22 @@ one a user gets.
 Assert that the convention holds: **installing a main crate yields all of that
 crate's sidecar binaries.** Concretely — `cargo install trusty-search` must produce
 *both* `trusty-search` and `trusty-embedderd`; `cargo install trusty-memory` must
-produce *both* `trusty-memory` and `trusty-bm25-daemon`; `cargo install
-trusty-installer` must produce *both* `trusty-installer` and `tctl`.
+produce **all three** of `trusty-memory`, `trusty-bm25-daemon`, and
+`trusty-memory-mcp-bridge`; `cargo install trusty-installer` must produce *both*
+`trusty-installer` and `tctl`.
 
 This is a regression gate on packaging: a crate that stops shipping its sidecar
 still "installs successfully" and still passes a naive smoke test, but leaves the
 user with a stack that cannot start its daemons.
+
+**This gate is only ever as good as §7.2's table.** It cannot detect the loss of a
+binary it has never heard of — an omitted row is not a weaker assertion, it is *no*
+assertion, and it fails silently and permanently. That is exactly what the
+2026-07-31 `trusty-memory-mcp-bridge` omission (§7.2) would have caused: a
+Single-Install gate blind to the third sidecar, passing green while the sidecar
+disappeared. The `--check-table` self-diff (§7.2) exists to make this class of
+omission loud, and it is the reason its diff source must be the `[[bin]]` targets
+themselves rather than any prose inventory that can drift.
 
 #### 7.5 Per-pattern expectations
 

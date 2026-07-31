@@ -106,11 +106,17 @@ Two deliberate choices, both judgment calls with no measurement behind them:
   harness's claim is that *installation* succeeded (DOC-1 Purpose), and a stale
   heartbeat does not refute that. `down` and `unknown` do refute it and fail.
 - **The top-level `verdict` is recorded but not used as the pass predicate.**
-  Under pattern (a), `trusty-mpm` is expected absent (DOC-1 §7.5), which will drive
-  `verdict` to `degraded` for a reason the design explicitly declares correct.
-  Asserting on `verdict` would therefore fail every pattern-(a) run. The oracle
-  logs `verdict` for the human and asserts on the per-member predicate. DOC-1 §7.5
-  states this requirement in prose ("must not fail the run"); this is its mechanism.
+  *(Amended 2026-07-31.)* The original reason was that pattern (a) expected
+  `trusty-mpm` absent, driving `verdict` to `degraded` on every pattern-(a) run.
+  The D2 reversal (DOC-1 D2, §7.5; §9.5 below) removes that specific case — no
+  in-scope member is expected absent under any pattern today. The choice stands on
+  its own merits: `verdict` is a single crate-wide roll-up whose derivation the
+  harness does not control, so asserting on it couples the oracle to a summarisation
+  rule that can change without any packaging regression. The per-member predicate
+  above is what DOC-1 §7.5 actually asks for, and it remains the assertion; the
+  oracle logs `verdict` for the human. Any future `expect_P == absent` row would
+  re-create the original degraded-verdict situation, and this predicate already
+  handles it.
 
 `doctor` exits 0 on `ok`, 2 on `degraded` (`doctor.rs:100-106`), 3 on unknown
 member, 1 on JSON write failure. Because `degraded` is an expected pattern-(a)
@@ -1004,8 +1010,8 @@ trusty-code	trusty-code	tcode	src/main.rs	-	yes	present	present	present
 trusty-installer	trusty-installer	trusty-installer	src/main.rs	-	yes	present	present	present
 trusty-installer	trusty-installer	tctl	src/main.rs	-	yes	present	present	present
 tga	trusty-git-analytics	tga	src/main.rs	-	yes	present	present	present
-trusty-mpm	trusty-mpm	tm	src/bin/tm/main.rs	cli	yes	absent	present	present
-trusty-mpm	trusty-mpm	trusty-mpm	src/bin/tm/main.rs	cli	yes	absent	present	present
+trusty-mpm	trusty-mpm	tm	src/bin/tm/main.rs	cli	yes	present	present	present
+trusty-mpm	trusty-mpm	trusty-mpm	src/bin/tm/main.rs	cli	yes	present	present	present
 # --- out of scope per DOC-1 D3; carried so --check-table can detect additions ---
 trusty-agents	trusty-agents	tagent	src/main.rs	-	no	-	-	-
 trusty-agents-ui	trusty-agents/ui/src-tauri	trusty-agents-ui	src/main.rs	-	no	-	-	-
@@ -1028,13 +1034,18 @@ trusty-sld-lint	trusty-sld-lint	sld-lint	src/main.rs	-	no	-	-	-
 **Three corrections to DOC-1 §7.2's seed table**, all found by enumerating the real
 manifests:
 
-1. **`trusty-memory` ships three binaries, not two.** DOC-1 §7.2 lists
-   `trusty-memory` and `trusty-bm25-daemon` and **omits `trusty-memory-mcp-bridge`**
-   (`crates/trusty-memory/Cargo.toml`, `src/bin/mcp_bridge.rs`). The research track
-   had it right — `vm-install-testing-trackB-opus.md:777` lists all three — so the
-   omission entered at the DOC-1 seed table. This matters directly for DOC-1 §7.4:
-   a Single-Install Convention gate that does not know about the third sidecar
-   cannot detect its loss, which is the exact regression §7.4 exists to catch.
+1. **`trusty-memory` ships three binaries, not two.** DOC-1 §7.2 originally listed
+   `trusty-memory` and `trusty-bm25-daemon` and **omitted `trusty-memory-mcp-bridge`**
+   (`crates/trusty-memory/Cargo.toml`, `src/bin/mcp_bridge.rs` — a deprecation shim
+   for pre-#914 users; the manifest comment states `cargo install trusty-memory`
+   "produces all three binaries in one command"). The research track had it right —
+   `vm-install-testing-trackB-opus.md:777` lists all three — so the omission entered
+   at the DOC-1 seed table. This matters directly for DOC-1 §7.4: a Single-Install
+   Convention gate that does not know about the third sidecar cannot detect its loss,
+   which is the exact regression §7.4 exists to catch. **Corrected in DOC-1 §7.2 and
+   §7.4 on 2026-07-31**, along with the project's Single-Install sidecar inventory
+   checklist (`.claude-mpm/INSTRUCTIONS.md`), which carried the same omission and is
+   the likely origin of it.
 2. **`trusty-review` is a publishable crate with a daemon and a `/health` endpoint
    (§1.3), and it is *not* in DOC-1 D3's seven.** Carried as `in_scope=no` here,
    faithfully to D3. Whether D3's scope should include it is a design question this
@@ -1065,35 +1076,42 @@ is out of scope, but `--check-table` must enumerate implicit targets or it will
 report a spurious deletion. Deriving the table from `cargo metadata` rather than by
 parsing manifests handles this for free, which is §9.6's argument.
 
-#### 9.5 `trusty-mpm` — a DOC-1 premise that does not hold
+#### 9.5 `trusty-mpm` — the DOC-1 premise that did not hold, and its resolution
 
-DOC-1 D2 states that `trusty-mpm` "carries `publish = false` and is therefore not on
-crates.io", and D3, §7.2, and §7.5 all build on that.
+**Resolved 2026-07-31. DOC-1 D2 has been amended; this section records how.**
+
+The original DOC-1 D2 stated that `trusty-mpm` "carries `publish = false` and is
+therefore not on crates.io", and D3, §7.2, and §7.5 all built on that.
 
 **`crates/trusty-mpm/Cargo.toml` contains no `publish` key.** The `[package]` table
 (lines 1–13) has `name`, `version`, `edition`, `rust-version`, `license`,
 `repository`, `description`, `readme`, `homepage`, `keywords`, `categories`,
 `exclude` — and no `publish`. Cargo's default is `publish = true`. Every textual
 occurrence of "publish" in that manifest is a **comment about other crates**, and
-those comments say the opposite of D2's premise: lines 108–111 and 290–291 explain
-that the Tauri GUI is kept as a separate `publish = false` crate specifically so
-that `trusty-mpm` itself "publishes cleanly to crates.io". `.github/workflows/e2e-docker.yml:66`
-likewise offers a "latest published" `trusty-mpm` version as an input.
+those comments say the opposite of the original premise: lines 108–111 and 290–291
+explain that the Tauri GUI is kept as a separate `publish = false` crate
+specifically so that `trusty-mpm` itself "publishes cleanly to crates.io".
+`.github/workflows/e2e-docker.yml:66` likewise offers a "latest published"
+`trusty-mpm` version as an input.
 
-This document **does not change DOC-1 D2** — that is outside this PR's scope and D2
-is a recorded owner decision whose *conclusion* (do not mix a source build into the
-"released" scenario) may well still be right for other reasons. But the seed table
-above cannot be written honestly without recording that its stated justification
-does not match the manifest.
+**Confirmed against the registry, 2026-07-31.** `cargo search trusty-mpm --limit 5`
+returns `trusty-mpm = "1.0.2"`. The crate is published. The manifest reading and the
+registry agree.
 
-**What the table does, and why it is still safe.** The `trusty-mpm` rows keep
-`expect_a = absent`, exactly as DOC-1 D2/§7.5 require, and `absent` is an asserted
-expectation — never a silent skip. DOC-1 §7.5 is explicit that a pattern-(a) run
-which unexpectedly *finds* `tm` "means something outside the pattern installed it,
-which is itself a finding". If `trusty-mpm` is in fact published, that assertion
-fires on the first pattern-(a) run and surfaces the discrepancy loudly, which is the
-correct behaviour for a table that encodes a premise it cannot verify. The premise
-is wrong; the assertion is safe; the resolution belongs in a D2 revision, not here.
+**What changed in the table.** An earlier revision of this document declined to
+change DOC-1 D2 and kept `expect_a = absent` on both `trusty-mpm` rows, reasoning
+that `absent` is an asserted expectation rather than a silent skip and would
+therefore surface the discrepancy loudly on the first pattern-(a) run. That was the
+right call for a document that could only flag the premise. It is the wrong call now
+that the premise has been checked and D2 amended: an assertion known in advance to
+be false is not a safety net, it is a scheduled failure. Both `trusty-mpm` rows
+above now carry **`expect_a = present`**, matching DOC-1 D2 and §7.5 as amended, and
+all twelve in-scope binaries are expected present under all three patterns.
+
+The `expect_*` columns and the pattern-aware oracle **stay** regardless. With the
+gap dissolved no in-scope row currently diverges across patterns, but the columns
+are the recording mechanism for the next legitimate divergence, and collapsing them
+would mean re-inventing them.
 
 #### 9.6 `--check-table` self-diff
 
@@ -1678,11 +1696,15 @@ Recorded in the same register as DOC-1 §14, so they are not lost.
 - **`tart list` digest introspection** (§3.3). The invocation that yields a full
   machine-readable digest was not measured. §3.3's by-construction variant is the
   fallback.
-- **`trusty-mpm` `publish` premise** (§9.5). DOC-1 D2's stated justification does not
-  match `crates/trusty-mpm/Cargo.toml`, which has no `publish` key. D2's conclusion
-  may survive on other grounds; its premise needs revisiting.
-- **`trusty-memory-mcp-bridge` missing from DOC-1 §7.2** (§9.3). Corrected in this
-  document's seed table.
+- ~~**`trusty-mpm` `publish` premise** (§9.5).~~ **Closed 2026-07-31.** The premise
+  was false — no `publish` key, and `cargo search trusty-mpm` returns `1.0.2`. DOC-1
+  D2 is reversed, D3 scopes all seven crates into pattern (a), DOC-1 §7.5 inverts to
+  asserted-present, and the seed table's `expect_a` is now `present`.
+- ~~**`trusty-memory-mcp-bridge` missing from DOC-1 §7.2** (§9.3).~~ **Closed
+  2026-07-31.** DOC-1 §7.2's table now lists all three `trusty-memory` binaries, and
+  the project's Single-Install sidecar inventory checklist
+  (`.claude-mpm/INSTRUCTIONS.md`) — the upstream source of the omission — is
+  corrected in the same PR.
 - **Full-stack watchdog is 5.6× a low-confidence estimate** (§10.2). Tighten once
   the first pattern-(c) full-stack run is timed, as DOC-1 §9 already requests.
 - **Daemon time-to-ready** (§10.1). Wholly unmeasured; the 60 s maximum is a guess.
