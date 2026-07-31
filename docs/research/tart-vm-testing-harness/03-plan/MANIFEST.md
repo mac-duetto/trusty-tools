@@ -97,8 +97,8 @@ not been completed is not complete, regardless of what its code does.
 - **Files delivered:** create `vmtest-harness/spike/spike-transport.sh`;
   create `vmtest-harness/base-image.pin`
 - **Measurements:** streamed bytes 84,930,112 (`… | wc -c`); …
-- **Deviations from plan:** §F-9 resolved by narrowest reading — stop issued
-  inside the poll loop, exit code discarded.
+- **Deviations from plan:** §F-10(d) resolved by narrowest reading — `tart-run.pid`
+  reaped after `vm_wait_for_stopped` returned, not killed.
 - **Tasks:** P1-T1..P1-T11 complete
 ```
 
@@ -135,6 +135,11 @@ not been completed is not complete, regardless of what its code does.
   against a seven-crate scope. **Replaced by plan P5-T8.**
 - **Daemon time-to-ready.** Wholly unmeasured; DOC-2 §10.1's 60 s maximum is a
   guess. Revisited in P8-T2.
+- **Guest-side graceful shutdown.** DOC-2 §12.2's `vm_request_stop` issues
+  `tart stop` and discards the status — the only shutdown path the research
+  measured. A guest-side `shutdown -h now` over `tart exec` is unmeasured and
+  deliberately unspecified. **Observed in P1-T8**; adopt only with the observation
+  behind it.
 
 ---
 
@@ -149,7 +154,9 @@ not been completed is not complete, regardless of what its code does.
 - **Files delivered:** — none
 - **Measurements:** — none *(expected: streamed byte count and file count;
   boot-to-ready seconds; provisioning seconds; `trusty-search` build seconds; the
-  full 64-hex base-image digest and how it was obtained — P1-T9)*
+  `vm_request_stop`-to-`stopped` interval (§F-9, the one unmeasured number in the
+  teardown path); the full 64-hex base-image digest and how it was obtained —
+  P1-T9)*
 - **Deviations from plan:** None.
 - **Tasks:** — none complete *(P1-T1 … P1-T11)*
 
@@ -169,7 +176,9 @@ not been completed is not complete, regardless of what its code does.
 - **Files delivered:** — none
 - **Measurements:** — none
 - **Deviations from plan:** None. *(Expected entries: §F-1 `run --dry-run`
-  definition; §F-5 TSV-reader placement; §F-9 shutdown initiator.)*
+  definition; §F-5 TSV-reader placement. §F-9's shutdown initiator is **no longer a
+  deviation to record** — `vm_request_stop` is specified in DOC-2 §12.2 as of
+  2026-07-31.)*
 - **Tasks:** — none complete *(P2-T1 … P2-T8)*
 
 ## Phase 3 — Guest bring-up: N1, provisioning, toolchain hand-off, source delivery
@@ -224,10 +233,11 @@ not been completed is not complete, regardless of what its code does.
 - **Measurements:** — none *(expected: **the first full-stack wall clock**, which
   replaces DOC-1 §9's 4–8 min extrapolation; **RC-2's observed exit code and
   stderr** from P5-T2; the RC-1 / §F-7 daemon-liveness disposition)*
-- **Deviations from plan:** None. *(Expected entries: §F-2 `tsv_version` resolution;
-  §F-7 daemon start and port discovery, including the BLOCKED branch if it fires;
-  the fourth `verify_single_install` call for `trusty-mpm`, which is a plan-level
-  judgment call beyond DOC-2 §12.5's skeleton.)*
+- **Deviations from plan:** None. *(Expected entries: §F-7 daemon start and port
+  discovery, including the BLOCKED branch if it fires; the fourth
+  `verify_single_install` call for `trusty-mpm`, which is a plan-level judgment call
+  beyond DOC-2 §12.5's skeleton. §F-2's `tsv_version` contradiction is **no longer a
+  deviation to record** — DOC-2 §1.2 was amended at source on 2026-07-31.)*
 - **Tasks:** — none complete *(P5-T1 … P5-T9)*
 
 ## Phase 6 — Pattern (b): branch
@@ -280,9 +290,9 @@ not been completed is not complete, regardless of what its code does.
 - **Observed result:** — not run
 - **Files delivered:** — none
 - **Measurements:** — none
-- **Deviations from plan:** None. *(Expected entry: §F-8 — the
-  `02-design/README.md` correction, listed separately so it survives a deferred
-  Phase 8.)*
+- **Deviations from plan:** None. *(No entry expected for §F-8: the
+  `02-design/README.md` correction was made at source on 2026-07-31, and P8-T5 is
+  now a verification check that should deliver no diff.)*
 - **Tasks:** — none complete *(P8-T1 … P8-T6)*
 
 ---

@@ -357,13 +357,22 @@ This is the task the whole phase exists for.
 - **Contract:** DOC-1 §8.1 (**never** bare-`tart stop` treated as completion —
   write loss reproduced **4 of 5 attempts**, the confirmed root cause of a golden
   image shipping broken), §8.2 (never `tart suspend`); DOC-2 §10.1
-  `wait_for_stopped` (**1 s interval, 120 s maximum**), §Shell discipline (trap
-  rule).
-- **Do:** initiate shutdown, then **poll `tart list` for the observable `stopped`
-  state**, then `tart delete`. See **§F-9** — DOC-2 never names what *initiates*
-  the shutdown, and the decision rule is there; do not improvise past it.
+  `wait_for_stopped` (**1 s interval, 120 s maximum**), §12.2 `vm_request_stop`,
+  §Shell discipline (trap rule, cleanup properties 4–5).
+- **Do:** call the shutdown initiator DOC-2 §12.2 now names — **`vm_request_stop`**:
+  `sync; sync` in the guest over `tart exec` (non-fatal), then `tart stop` with its
+  **exit code discarded**. Then **poll `tart list` for the observable `stopped`
+  state**, then `tart delete`. Do not trust the stop's return, and do not kill the
+  `tart run` process on failure.
+  - **§F-9 was RESOLVED at source on 2026-07-31** — the initiator is specified, not
+    left to you. What is still open is the **judgment call DOC-2 flags**: a
+    guest-side `shutdown -h now` was never measured and is not specified. Observe
+    how the specified path behaves here and record it (P1-T9); propose the
+    alternative only with that observation behind it.
 - **Acceptance:** after the script exits, `tart list | grep vmtest-spike` produces
-  **no output**, and the script's exit status is 0.
+  **no output**, and the script's exit status is 0. Record the wall clock between
+  `vm_request_stop` returning and `tart list` first reporting `stopped` — that
+  interval is the only unmeasured number in the teardown path.
 - **Depends:** P1-T7
 
 ### P1-T9 — Record the two measurements this phase produces
@@ -374,10 +383,11 @@ This is the task the whole phase exists for.
   byte count so this stops being an estimate"), DOC-1 §14 (the transport gap),
   DOC-2 open items (full base-image digest).
 - **Do:** record verbatim — streamed byte count and file count; boot-to-ready
-  seconds; provisioning seconds; `trusty-search` build seconds; the base-image
+  seconds; provisioning seconds; `trusty-search` build seconds; the
+  `vm_request_stop`-to-`stopped` interval from P1-T8 (§F-9); the base-image
   digest and how it was obtained. These replace three estimates in the doc set and
   are written back to DOC-1/DOC-2 in P8-T4.
-- **Acceptance:** MANIFEST Phase 1 `Measurements` contains five numeric values and
+- **Acceptance:** MANIFEST Phase 1 `Measurements` contains six numeric values and
   the digest, each with the command that produced it.
 - **Depends:** P1-T8
 
@@ -515,17 +525,23 @@ debugging argument parsing while a VM boots.
 ### P2-T4 — `lib/vm.sh` — the OS boundary
 
 - **Files:** create `vmtest-harness/lib/vm.sh`.
-- **Contract:** DOC-2 §12.2 (`lib/vm.sh` surface — **eleven** signatures, given in
+- **Contract:** DOC-2 §12.2 (`lib/vm.sh` surface — **twelve** signatures, given in
   full), §12.1 (calling conventions), §10.1/§10.2 (poll and watchdog parameters),
   §10.4 (**no `timeout(1)` on macOS**); DOC-1 §3.2 (the designed extension seam for
   Linux — §12.2), §8.1, §8.2.
 - **Do:** implement `vm_clone`, `vm_size`, `vm_boot`, `vm_wait_ready`, `vm_state`,
-  `vm_exec`, `vm_exec_raw`, `vm_exec_stdin`, `vm_wait_for_stopped`,
-  `vm_assert_stopped`, `vm_delete`, exactly per §12.2's return/emit column.
+  `vm_exec`, `vm_exec_raw`, `vm_exec_stdin`, `vm_request_stop`,
+  `vm_wait_for_stopped`, `vm_assert_stopped`, `vm_delete`, exactly per §12.2's
+  return/emit column.
   - **`vm_exec` deliberately does not die on non-zero** — it returns the guest's
     status verbatim so a caller can distinguish "the command failed" from "the
     harness failed", which is precisely what N1 needs, since N1's *expected* result
     is a non-zero exit. Callers requiring success wrap with `|| die 50 "..."`.
+  - **`vm_request_stop` always returns 0 and discards `tart stop`'s status**
+    (§12.2, added by the 2026-07-31 §F-9 amendment). The guest-side `sync; sync`
+    that precedes the stop is logged-but-not-fatal, because cleanup runs on paths
+    where the guest is already unreachable. The completion signal is
+    `vm_wait_for_stopped`, never the stop's return.
   - Build the watchdog from shell primitives: background the command, record the
     PID, poll `kill -0 <pid>` at the site's interval until the deadline, then kill
     and reap. **Do not reach for `timeout`/`gtimeout`** — that adds a Homebrew
@@ -1123,8 +1139,12 @@ DOC-2 §6.2 deliberately leaves N2's predicate weak because the code at
 
 - **Files:** modify `vmtest-harness/lib/verify.sh`.
 - **Contract:** DOC-2 §1.2 (the literal shape, the three properties, the pass
-  predicate), §12.2. **See §F-2 — §1.2's predicate references `tsv_version(...)`
-  but §9.1's nine columns contain no version column.** The decision rule is in §F-2.
+  predicate **and its 2026-07-31 amendment**), §9.1's matching note, §12.2.
+  **§F-2 was RESOLVED at source:** the predicate's last clause no longer names
+  `tsv_version(...)` — it compares against `source_tree_version(trusty-installer)`,
+  read with `cargo metadata --no-deps --format-version 1` in the guest at
+  `$VMTEST_GUEST_SRC` and parsed host-side with `jq`. There is no version column in
+  `expected-binaries.tsv` and none is to be added.
 - **Do:** assert `tool_version` non-empty, `stack_version` present and non-empty
   **only**, and `contract_floor`/`contract_target` integers with `floor <= target`.
   - `tool` is hardcoded `"trusty-installer"` **even when the binary is invoked as
@@ -1369,10 +1389,11 @@ asserts `tm` **present**. A run that does not find `tm` is a **failure**.
 ### P7-T3 — Pattern-(a) relaxation in `verify_versions`
 
 - **Files:** modify `vmtest-harness/lib/verify.sh`.
-- **Contract:** DOC-2 §1.2 (`tool_version` asserted equal to the expected version
-  under patterns (b)/(c); **asserted merely present under pattern (a), where the
-  published version legitimately differs from the working tree**). Interacts with
-  **§F-2**.
+- **Contract:** DOC-2 §1.2 (`tool_version` asserted equal to
+  `source_tree_version(trusty-installer)` under patterns (b)/(c); **asserted merely
+  present under pattern (a), where the published version legitimately differs from
+  the working tree**). §1.2's 2026-07-31 amendment states the pattern-(a) case
+  directly: there is no source tree to compare against, so there is no comparison.
 - **Do:** gate the equality clause on `pattern ∈ {b, c}`. This is the one place
   the oracle is genuinely pattern-aware today, and it is a real difference, not a
   vestige.
@@ -1504,19 +1525,20 @@ now replace.
   has a real number.
 - **Depends:** P8-T3
 
-### P8-T5 — Fix the stale `02-design/README.md` summary
+### P8-T5 — Verify the `02-design/README.md` summary is still correct
 
-- **Files:** modify `docs/research/tart-vm-testing-harness/02-design/README.md`.
+- **Files:** none expected.
 - **Contract:** DOC-1 D2 (as amended), D3; DOC-2 §9.5.
-- **Do:** `02-design/README.md` ("The short version") still reads *"Seven crates in
-  scope; `trusty-mpm` is a documented gap in pattern (a) only (`publish = false`)"*.
-  That is the **superseded** premise and it survives in the index because the
-  reversal amended DOC-1 and DOC-2 but not their README. It is the first thing a
-  zero-context engineer reads. Correct it to state that pattern (a) covers all
-  seven crates and that `trusty-mpm` is published at v1.0.2.
-  - This is flagged as a **known doc defect**, not discovered during
-    implementation; it is listed in §F-8 so it cannot be lost if Phase 8 is
-    deferred.
+- **Do:** **this task was completed at source on 2026-07-31 (§F-8) and is now a
+  verification check, not an edit.** `02-design/README.md` ("The short version")
+  previously read *"Seven crates in scope; `trusty-mpm` is a documented gap in
+  pattern (a) only (`publish = false`)"* — the superseded premise, surviving in the
+  index because the reversal amended DOC-1 and DOC-2 but not their README. It now
+  states that all three patterns cover all seven crates and that `trusty-mpm` is
+  published at v1.0.2. Confirm that is still what it says, and that nothing added
+  during Phases 1–8 reintroduced the old claim anywhere in the doc set. **If it is
+  already correct, this task delivers no diff — that is the expected outcome, not a
+  skipped task.**
 - **Acceptance:** `git grep -n 'publish = false'
   docs/research/tart-vm-testing-harness/` returns no line claiming `trusty-mpm` is
   unpublished; the README's short version says seven crates in all three patterns.
@@ -1549,7 +1571,15 @@ resolution in the MANIFEST. Where a gap cannot be resolved by observation, the
 decision rule says **stop and record**, not **choose something**.
 
 > Honest uncertainty is this doc set's established register. A plan that silently
-> filled twelve gaps would read more confident and be worth less.
+> filled these gaps would read more confident and be worth less.
+
+**Ten items were flagged. Three — §F-2, §F-8, §F-9 — were RESOLVED at source on
+2026-07-31 by amending DOC-2 and the design README rather than leaving them for the
+executing engineer, because each was a defect with a determinable answer rather than
+a genuine unknown. Seven remain open.** The resolved three are retained below with
+their original statement of the problem and the amendment that closed it: this doc
+set records reversals rather than making silent edits, and an engineer who reads a
+stale copy of DOC-2 needs to be able to tell which is which.
 
 ---
 
@@ -1569,27 +1599,25 @@ decision rule says **stop and record**, not **choose something**.
   `--dry-run` that clones and boots is not a dry run.
 - **Record:** MANIFEST Phase 2 Deviations, as `§F-1 resolved by narrowest reading`.
 
-### §F-2 — §1.2's predicate references a TSV column that §9.1 does not define
+### §F-2 — §1.2's predicate referenced a TSV column that §9.1 does not define — **RESOLVED at source, 2026-07-31**
 
-- **Where:** DOC-2 §1.2's pass predicate ends `(pattern ∈ {b,c}) → tool_version ==
-  tsv_version(trusty-installer)`, and §1.2's prose says `tool_version` is *"asserted
+- **Where:** DOC-2 §1.2's pass predicate ended `(pattern ∈ {b,c}) → tool_version ==
+  tsv_version(trusty-installer)`, and §1.2's prose said `tool_version` is *"asserted
   equal to the crate version in `expected-binaries.tsv`"*. But **§9.1's schema has
   nine columns and none of them is a version**, and §9.3's seed rows carry no
-  version value. `tsv_version()` has no source.
-- **Why it matters:** it is a direct contradiction between two contract sections,
-  not an omission — following either one literally breaks the other.
-- **Decision rule (observation, no new column):** source the expected version from
-  **`cargo metadata --no-deps`** at run time — the same source `--check-table`
-  already uses (§9.6), already a host dependency, and by construction never stale.
-  **Do not add a tenth column.** §9.6 is explicit that the TSV's non-derivable
-  columns are *"human judgments about the harness's scope, not facts about the
-  workspace"*; a version is the opposite — a fact that changes on every release,
-  and putting it in a hand-maintained file would guarantee drift in exactly the way
-  §7.2 exists to prevent.
-- **Caveat:** this is a **judgment call by this plan**, resolving a contradiction
-  between DOC-2 §1.2 and §9.1. Either section could be amended instead. Record it
-  and let the amendment be a deliberate later PR.
-- **Record:** MANIFEST Phase 5 Deviations.
+  version value. `tsv_version()` had no source.
+- **Why it mattered:** it was a direct contradiction between two contract sections,
+  not an omission — following either one literally broke the other.
+- **Resolution — DOC-2 §1.2 amended, no tenth column.** The clause is restated as
+  `tool_version == source_tree_version(trusty-installer)`, where the expected
+  version is read with `cargo metadata --no-deps --format-version 1` **in the guest
+  at `$VMTEST_GUEST_SRC`** and parsed host-side with `jq`. Reading the guest's tree
+  rather than the host's is what makes the clause correct under pattern (b), whose
+  clone is of `default_branch` and need not match the working tree. §9.1 carries a
+  matching note so the column cannot be re-proposed. See **DOC-2 §1.2** (amendment
+  block after the pass predicate) and **DOC-2 §9.1**.
+- **What the engineer does now:** implement the amended predicate. There is no
+  decision left to make and nothing to record as a deviation.
 
 ### §F-3 — The twelve in-scope rows contain only seven distinct crate directories
 
@@ -1696,42 +1724,53 @@ decision rule says **stop and record**, not **choose something**.
      land, `stack doctor` is healthy — does not rest on daemon health.
 - **Record:** MANIFEST Phase 5 Deviations **and** Measurements.
 
-### §F-8 — `02-design/README.md` still carries the superseded D2 premise
+### §F-8 — `02-design/README.md` carried the superseded D2 premise — **RESOLVED at source, 2026-07-31**
 
 - **Where:** `docs/research/tart-vm-testing-harness/02-design/README.md`, "The
   short version": *"Seven crates in scope; `trusty-mpm` is a documented gap in
   pattern (a) only (`publish = false`)."*
-- **Why it matters:** the 2026-07-31 reversal amended DOC-1 and DOC-2 but not their
+- **Why it mattered:** the 2026-07-31 reversal amended DOC-1 and DOC-2 but not their
   index. The index is the **first** thing a zero-context engineer reads, and it
-  states as fact the exact premise DOC-1 D2 calls *"wrong"* in both halves.
-- **Decision rule:** fix it — **P8-T5**. It is listed here as well so it survives
-  a deferred Phase 8. It is a documentation defect with a known correct value, not
-  a judgment call.
-- **Record:** MANIFEST Phase 8 Files delivered.
+  stated as fact the exact premise DOC-1 D2 calls *"wrong"* in both halves.
+- **Resolution — the README bullet is corrected.** It now reads that all three
+  patterns cover all seven crates, that `trusty-mpm` is published at **v1.0.2**, and
+  that the "documented gap" is dissolved. See **`../02-design/README.md`**, "The
+  short version".
+- **What the engineer does now:** nothing. **P8-T5** is reduced to a verification
+  check.
 
-### §F-9 — Nothing specifies what *initiates* guest shutdown
+### §F-9 — Nothing specified what *initiates* guest shutdown — **RESOLVED at source, 2026-07-31**
 
-- **Where:** DOC-2 §Shell discipline's cleanup rule step 5 says *"`vm_wait_for_stopped`
+- **Where:** DOC-2 §Shell discipline's cleanup rule step 5 said *"`vm_wait_for_stopped`
   then `vm_delete`, in that order, always. Never a bare `tart stop`."* §12.2's
   `vm_wait_for_stopped` **polls** `tart list` for state `stopped`. DOC-1 §4.3's
   sequence shows `wait_for_stopped()` then `tart delete`. **No function in the
-  contract issues a shutdown**, and a poll for `stopped` on a guest nobody asked to
-  stop will simply run out its 120 s budget and exit 70.
-- **Decision rule (narrowest reading of "bare"):** DOC-1 §8.1's rule is *"never
-  issue a bare `tart stop` **and treat its return as completion**"*, and its
-  generalisation is *"a tart exit code is not a completion signal"* — the
-  prohibition is on **trusting the exit code**, not on issuing the command.
-  Therefore: issue the stop **inside `vm_wait_for_stopped`** (it is in `lib/vm.sh`,
-  the only file permitted to contain `tart`), **discard its exit code entirely**,
-  and then poll `tart list` for the observable `stopped` state at 1 s intervals up
-  to 120 s. That sequence is what the measured write-loss evidence actually
-  forbids working around — the loss occurred when the return was trusted, and
-  polling is exactly the mitigation K1d measured as negligible in cost.
-- **If a guest-side clean shutdown (e.g. `shutdown -h now` over `tart exec`)
-  proves more reliable in practice, that is a legitimate refinement** — but it must
-  be recorded with the observation that motivated it, not adopted on intuition.
-- **Record:** MANIFEST Phase 2 Deviations, with the observed teardown behaviour
-  from the first real run pasted in.
+  contract issued a shutdown**, so a poll for `stopped` on a guest nobody asked to
+  stop would run out its 120 s budget and exit **70** — on every run, including
+  successful ones.
+- **Resolution — DOC-2 §12.2 gains `vm_request_stop <vm_name>`.** It lives in
+  `lib/vm.sh` (the only file permitted to contain `tart`), flushes the guest with
+  `sync; sync` over `tart exec` — non-fatal on failure — then issues `tart stop`
+  and **discards its exit code entirely**, always returning 0. That is the
+  research's own procedure (`../01-research/vm-install-probe-findings.md:820-831`).
+  The cleanup ordering is now **`vm_request_stop` → `vm_wait_for_stopped` →
+  `vm_delete`**, all three skipped under `--keep`. DOC-1 §8.1 is not violated: it
+  forbids issuing a bare `tart stop` *and treating its return as completion*, and
+  the poll remains the completion signal. On failure there is **no escalation** —
+  one attempt, then exit 70 and leave the VM for a human, because force-killing
+  `tart run` is repairing, which DOC-1 §4.1 forbids. See **DOC-2 §12.2**
+  (`vm_request_stop`, and the note beneath the module tables) and **§Shell
+  discipline**, cleanup properties 4 and 5.
+- **The one thing still open, and it is flagged in DOC-2 as a judgment call:**
+  a *guest-side* `shutdown -h now` over `tart exec` would be the more obviously
+  graceful initiator, but it was never measured — Track A used it over **SSH**,
+  which DOC-1 §5.1 excludes as a transport, and it requires passwordless `sudo` in
+  the guest. It is **not** specified. **Validate the specified path in Phase 1**
+  (P1-T8) and, if a guest-side shutdown proves more reliable, record the observation
+  that motivated the change before adopting it.
+- **Record:** MANIFEST Phase 1 Measurements — the observed teardown behaviour from
+  the first real run, pasted verbatim. This is now an observation to capture, not a
+  decision to make.
 
 ### §F-10 — Smaller gaps, resolved by narrowest reading; recorded for completeness
 
@@ -1770,7 +1809,7 @@ maps work to contracts.
 - [DOC-1 — Tart VM Install Testing Harness](../02-design/01-vm-install-harness.md) — settles what and why; **the authority on every decision this plan sequences**.
 - [DOC-2 — Harness Contracts & Interfaces](../02-design/02-harness-contracts.md) — settles every interface; **every task above cites a section of it**.
 - [MANIFEST.md](./MANIFEST.md) — the durable progress record. Updated by the final numbered task of every phase.
-- [`../02-design/README.md`](../02-design/README.md) — design index. **Carries a superseded claim; see §F-8 and P8-T5.**
+- [`../02-design/README.md`](../02-design/README.md) — design index. **Corrected 2026-07-31; §F-8 is resolved and P8-T5 is now a verification check.**
 - [`../01-research/vm-install-probe-findings.md`](../01-research/vm-install-probe-findings.md) — raw measurements A–K; every number cited above traces here.
 - [`../01-research/devils-advocate-review.md`](../01-research/devils-advocate-review.md) — critique #9 (`:20`) is the tar-transport gap Phase 1 exists to close.
 
