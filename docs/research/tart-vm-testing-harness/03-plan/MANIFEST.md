@@ -149,6 +149,11 @@ is the next phase to start.
   currently distinguish them. See Phase 1 Measurements; written back in P8-T4.
 - **NEW, opened by Phase 1 — P2-T4's acceptance grep cannot pass while
   `spike/` exists.** See Phase 1 Deviations item 4. Phase 2 must resolve it.
+- **NEW, opened by Phase 1 — pattern (c)'s defining property is still untested.**
+  The Phase 1 run streamed a **clean** worktree, so `-o` contributed zero files and
+  *"it includes uncommitted work"* (DOC-1 §6.1) was never exercised. The transport
+  is verified; the thing that makes it pattern (c) rather than a slower pattern (b)
+  is not. Run it once against a dirty worktree — P3-T4 or P5.
 
 ---
 
@@ -301,11 +306,32 @@ is the next phase to start.
   bytes would have passed by 2%, on a quantity the pass condition does not name.
   P8-T4 should write back **both**, labelled.
 
-  **Note on 1b — the file-count delta is `-o`, exactly as DOC-1 §6.1 predicted.**
-  5,337 vs 5,306 is +31 untracked-but-not-ignored files, which `git archive` never
-  includes. DOC-1 §6.1 called its figure a "lower bound / close proxy" for this
-  reason and the run confirms it. The delta is a property of this working tree on
-  this day, not a constant.
+  **Note on 1b — CORRECTION. The `-o` hypothesis is wrong, and this run did not
+  test it at all.** The first draft of this entry attributed the 5,337 vs 5,306
+  delta to `-o` adding untracked-but-not-ignored files, which is the mechanism
+  DOC-1 §6.1 predicts. **That is false for this run.** Measured after the fact:
+
+  ```
+  $ git ls-files | wc -l                          # tracked only
+      5337
+  $ git ls-files -o --exclude-standard | wc -l     # untracked, not ignored
+         0
+  $ git status --short                             # (no output)
+  ```
+
+  The delivery worktree was **clean**, so `-o` contributed **zero** files and the
+  streamed set was exactly the tracked set. The +31 over 5,306 is simply repository
+  growth since the research measured it. **Consequence: DOC-1 §6.1's stated concern
+  — that its figure is a "lower bound / close proxy" because `-o` adds files
+  `git archive` never sees — remains UNTESTED.** The one property that most
+  distinguishes pattern (c) from pattern (b), *"it includes uncommitted work"*
+  (DOC-1 §6.1), was **not exercised by this run**, because there was no uncommitted
+  work to include. Phase 3's promotion of this pipeline (P3-T4) or Phase 5 should
+  deliberately run it against a dirty worktree at least once.
+
+  Recorded as a correction rather than a silent edit, per this file's append-only
+  rule — and because it is the same failure mode §F-3 catalogues: reasoning from a
+  plausible mechanism instead of running the command.
 
   **Note on 5 — the interval is below the harness's own observational floor, and
   that is the finding.** `vm_wait_for_stopped`'s **first** poll — issued
