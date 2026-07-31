@@ -123,13 +123,13 @@ amended; DOC-2 §9.5).
 
 Consequences this plan carries end-to-end:
 
-- Pattern (a) covers **all seven crates** (DOC-1 D3), not six.
+- Pattern (a) covers **all eight crates** (DOC-1 D3), not six and not seven.
 - `tm` and `trusty-mpm` are asserted **PRESENT** under (a), (b) and (c) alike
   (DOC-1 §7.5 as amended). `expect_a = present` on both rows (DOC-2 §9.3).
 - **A pattern-(a) run that does not find `tm` is a FAILURE**, where under the
   superseded D2 it was the expected result.
-- All **twelve** in-scope binaries are expected present under all three patterns.
-  Seven crates produce twelve binaries (DOC-2 §9.3) — that is not a typo, and
+- All **thirteen** in-scope binaries are expected present under all three patterns.
+  Eight crates produce thirteen binaries (DOC-2 §9.3) — that is not a typo, and
   §7.4's Single-Install gate is why the count matters.
 - The `expect_*` columns and the pattern-aware oracle **stay** (DOC-2 §9.5). No
   in-scope row diverges across patterns *today*; the columns are the recording
@@ -139,6 +139,37 @@ Consequences this plan carries end-to-end:
 Any text you encounter — in this repo or in a stale doc — implying a six-crate
 pattern-(a) scope, or a known-absent `tm`, is **wrong**. One such text is known and
 is fixed in P8-T5.
+
+### A.1b The D3 scope widening — `trusty-review` is IN
+
+**Owner decision, 2026-07-31, recorded as a dated amendment to DOC-1 D3.** This is
+**separate from and later than** the D2 reversal above. D2 corrected a false
+premise; this widens a scope that was never wrong, only narrower than the owner
+wanted. Do not merge the two in your head — a doc that says "seven" may be
+faithfully recording the state between the two amendments.
+
+- **DOC-1 D3 is now eight crates.** `trusty-review` is row 8. DOC-2 §9.3 note 2 had
+  carried it `in_scope=no` and asked that the question be *"decided knowingly rather
+  than by omission"*; it has been.
+- **It is published.** `crates/trusty-review/Cargo.toml` declares `publish = true`
+  **explicitly**, and `cargo search trusty-review --limit 5` returned
+  `trusty-review = "0.10.1"` on 2026-07-31. Pattern (a) installs it with
+  `cargo install trusty-review --locked`.
+- **The published version is 0.10.1; the working tree is 0.11.0.** Pattern (a) will
+  therefore install a *different version* from (b) and (c). This is expected, not
+  drift. DOC-2 §1.2's version cross-check applies only to patterns (b) and (c), so
+  nothing asserts them equal.
+- **It is single-binary** — one `[[bin]]`, `name = "trusty-review"`,
+  `path = "src/main.rs"`, `required-features = []`. So it adds **one** in-scope TSV
+  row (twelve → thirteen), **one** `crate_dir` (seven → eight), and **no**
+  `verify_single_install` call: a single-binary crate has no Single-Install
+  Convention to gate. The multi-binary in-scope packages remain **four**.
+- **Its `/health` comes into the oracle's scope**, under the INTERIM liveness
+  predicate only. DOC-2 §1.3 records why liveness-only is still sufficient: the
+  known MCP-vs-HTTP drift in `review_health` is **off the assertion path** (the
+  oracle reads the HTTP handler, never the MCP tool), and the predicate touches only
+  `.status`, which all four daemon shapes carry. **RC-1's status is unchanged** — it
+  becomes neither more nor less urgent.
 
 ### A.2 Phase map
 
@@ -860,7 +891,7 @@ and its differ before anything asserts against it.
     against **every** `[[bin]]` in the workspace or it cannot detect a newly added
     binary: a binary absent from a scope-only file is indistinguishable from one
     that was never in scope.
-  - **Twelve in-scope rows, seven packages.** Both `trusty-mpm` rows carry
+  - **Thirteen in-scope rows, eight packages.** Both `trusty-mpm` rows carry
     `expect_a = present` (§A.1). `tga`'s `package` is `tga` while its `crate_dir`
     is `trusty-git-analytics` — the discontinuity DOC-1 D3 warns about.
   - `req_features` is carried because four in-scope binaries are gated behind
@@ -873,7 +904,7 @@ and its differ before anything asserts against it.
   awk -F'\t' 'NR>1 && $1 !~ /^#/ && NF!=9 {print NR": "NF}' vmtest-harness/expected-binaries.tsv
   ```
   prints nothing (every row has nine fields); `awk -F'\t' '$6=="yes"' | wc -l`
-  returns **12**; `grep -c 'trusty-memory' ` shows the **three** `trusty-memory`
+  returns **13**; `grep -c 'trusty-memory' ` shows the **three** `trusty-memory`
   binary rows including `trusty-memory-mcp-bridge`.
 - **Depends:** P2-T8
 
@@ -912,14 +943,17 @@ and its differ before anything asserts against it.
   been right). If `--check-table` reports findings on
   the unmodified workspace, the workspace has moved since. **Record every finding
   verbatim in the MANIFEST**, then apply the human edit — adding a genuinely new
-  binary with `in_scope=no` unless it belongs to one of D3's seven packages, in
+  binary with `in_scope=no` unless it belongs to one of D3's **eight** packages, in
   which case it is `in_scope=yes` with `present` in all three `expect_*` columns.
-  - **Do not silently widen D3's scope.** DOC-2 §9.3 note 2 records that
-    `trusty-review` is a publishable crate with a daemon and a `/health` endpoint
-    that is **not** in D3's seven, carried `in_scope=no` faithfully to D3, and that
+  - **Do not silently widen D3's scope.** The worked precedent is `trusty-review`:
+    DOC-2 §9.3 note 2 carried it `in_scope=no` faithfully to D3 while recording that
     *"whether D3's scope should include it is a design question this document does
-    not decide, but it should be decided knowingly rather than by omission."* Same
-    rule for anything new: knowingly, in a PR, not as a side effect of this task.
+    not decide, but it should be decided knowingly rather than by omission."* It was
+    then decided knowingly — by the owner, on 2026-07-31, as a **dated amendment to
+    DOC-1 D3** (§A.1b) — and only then did its row flip to `in_scope=yes`. That is
+    the shape the rule requires: flag it here, decide it in a design amendment, and
+    let the table follow. Same rule for anything new: knowingly, in a PR, not as a
+    side effect of this task.
 - **Acceptance:** `vmtest --check-table` exits 0; the MANIFEST records either
   "no drift since DOC-2 §9.3" or the exact findings and the edit made.
 - **Depends:** P4-T2
@@ -928,16 +962,16 @@ and its differ before anything asserts against it.
 
 - **Files:** modify `vmtest-harness/vmtest` (or `lib/verify.sh`, per §F-5).
 - **Contract:** DOC-2 §12.5 (calls `tsv_scope_crate_dirs`, "column 2 where
-  in_scope=yes"), §9.1, §9.3. **See §F-3** — the twelve in-scope rows contain only
-  **seven** distinct `crate_dir` values, and DOC-2 never says to deduplicate.
+  in_scope=yes"), §9.1, §9.3. **See §F-3** — the thirteen in-scope rows contain only
+  **eight** distinct `crate_dir` values, so the helper must deduplicate.
 - **Do:** implement `tsv_scope_crate_dirs` (unique `crate_dir`, in first-appearance
   order), `tsv_scope_packages` (unique `package`), and `tsv_expect <package>
   <binary> <pattern>`. Apply §F-3's decision rule.
-- **Acceptance:** `tsv_scope_crate_dirs` emits **7** lines, beginning
-  `trusty-search` and containing `trusty-git-analytics` (**not** `tga` — that is
-  the package name, and `--path` takes the directory); `tsv_scope_packages` emits
-  **7** lines including `tga` and `trusty-mpm`; `tsv_expect trusty-mpm tm a`
-  returns `present`.
+- **Acceptance:** `tsv_scope_crate_dirs` emits **8** lines, containing
+  `trusty-git-analytics` (**not** `tga` — that is the package name, and `--path`
+  takes the directory); `tsv_scope_packages` emits **8** lines including `tga`,
+  `trusty-mpm` and `trusty-review`; `tsv_expect trusty-mpm tm a` returns
+  `present`.
 - **Depends:** P4-T1
 
 ### P4-T5 — Update the MANIFEST
@@ -955,8 +989,8 @@ and its differ before anything asserts against it.
 
 ## PHASE 5 — Pattern (c) complete: install steps, N2, and the full oracle
 
-**Goal:** `vmtest run local` installs all seven crates from the streamed tree and
-asserts all twelve binaries, `tctl stack doctor --json`, `tctl version --json`, the
+**Goal:** `vmtest run local` installs all eight crates from the streamed tree and
+asserts all thirteen binaries, `tctl stack doctor --json`, `tctl version --json`, the
 Single-Install Convention, and interim daemon liveness.
 
 **Why this is the largest phase.** Everything before it was infrastructure.
@@ -968,10 +1002,10 @@ measurement.
 **Checkpoint — PASS CONDITION.**
 
 > `vmtest run local` **exits 0**, and the run log shows:
-> (i) all **seven** crates installed via `cargo install --path`, each preceded by a
+> (i) all **eight** crates installed via `cargo install --path`, each preceded by a
 > `rustc --version` line emitted from inside that crate's directory;
-> (ii) `verify_binaries` reporting **12/12 in-scope binaries present**;
-> (iii) `tctl stack doctor --json` parsed, with every one of the seven packages —
+> (ii) `verify_binaries` reporting **13/13 in-scope binaries present**;
+> (iii) `tctl stack doctor --json` parsed, with every one of the eight packages —
 > **including `trusty-mpm`** — satisfying `health ∈ {healthy, stale}`,
 > `on_path == true`, `version != null`;
 > (iv) `verify_single_install` passing for `trusty-search` (2 binaries),
@@ -1019,9 +1053,9 @@ measurement.
   - **Never `cp` a binary into a `PATH` directory** (DOC-1 §7.3): copying a Mach-O
     binary is not equivalent to installing it, and cdhash-dependent behaviour (TCC
     attribution, keychain ACLs, notarisation) does not survive an arbitrary copy.
-- **Acceptance:** the run log contains seven `rustc --version` lines, each
+- **Acceptance:** the run log contains eight `rustc --version` lines, each
   immediately preceding its `cargo install --path`, and the one emitted from
-  `crates/trusty-git-analytics` reports a **different** version from the other six
+  `crates/trusty-git-analytics` reports a **different** version from the other seven
   — reproducing K5. If it does not, that is a finding to record, not to smooth over.
 - **Depends:** P4-T5
 
@@ -1117,7 +1151,7 @@ DOC-2 §6.2 deliberately leaves N2's predicate weak because the code at
     carries the fourth call itself.** The rule the amendment states is the one to
     implement — *every multi-binary in-scope package gets a call*, and there are
     four of them.
-- **Acceptance:** `verify_binaries` logs `12/12 present`; four
+- **Acceptance:** `verify_binaries` logs `13/13 present`; four
   `verify_single_install` calls pass; deliberately renaming
   `~/.cargo/bin/trusty-memory-mcp-bridge` in the guest makes the run exit **60**
   with the sidecar named in the message.
@@ -1146,7 +1180,7 @@ DOC-2 §6.2 deliberately leaves N2's predicate weak because the code at
   - **Do not reach for `tctl stack health --json`** because the name reads better:
     it has a narrower shape and a **different verdict vocabulary** (`ready` |
     `degraded` versus doctor's `ok` | `degraded`).
-- **Acceptance:** the run log shows the parsed member list with seven packages, all
+- **Acceptance:** the run log shows the parsed member list with eight packages, all
   satisfying the predicate, `trusty-mpm` among them; and the `verdict` value logged
   but not asserted.
 - **Depends:** P5-T4
@@ -1236,8 +1270,8 @@ explicitly, in code and in the MANIFEST.
 - **Do:** complete the scenario to §12.5 exactly — deliver, install each in-scope
   crate, N2, then the six verifications. Run it. Time it.
   - **The 4–8 minute full-stack figure is an extrapolation, computed for six
-    crates against a seven-crate scope, and explicitly lower-confidence since the
-    D2 amendment widened it.** Do not treat your measured number as a confirmation
+    crates against what is now an eight-crate scope, and explicitly lower-confidence
+    since the D2 and D3 amendments each widened it without re-deriving it.** Do not treat your measured number as a confirmation
     or a refutation of it — it *replaces* it.
   - Then tighten the `install_timeout` (currently 2700 s, **~5.6× a low-confidence
     estimate**) to a value grounded in your measurement. DOC-2 §10.2's reasoning is
@@ -1269,8 +1303,8 @@ explicitly, in code and in the MANIFEST.
 
 **Checkpoint — PASS CONDITION.**
 
-> `vmtest run branch` **exits 0** with the same twelve-binary and
-> seven-package `stack doctor` assertions as Phase 5, and the run log shows a
+> `vmtest run branch` **exits 0** with the same thirteen-binary and
+> eight-package `stack doctor` assertions as Phase 5, and the run log shows a
 > guest-side `git clone` (no host→guest byte stream) and the checked-out branch
 > name.
 
@@ -1344,19 +1378,21 @@ explicitly, in code and in the MANIFEST.
 ## PHASE 7 — Pattern (a): released
 
 **Goal:** `vmtest run released` — `cargo install <package> --locked` from
-crates.io for **all seven** crates. **Adds a scenario only**, per DOC-1 §10 step 3
+crates.io for **all eight** crates. **Adds a scenario only**, per DOC-1 §10 step 3
 as amended.
 
 **This is where the D2/D3 reversal is proved.** Under the superseded D2 this
-pattern covered six crates and asserted `tm` known-absent. It now covers seven and
-asserts `tm` **present**. A run that does not find `tm` is a **failure**.
+pattern covered six crates and asserted `tm` known-absent. It now covers **eight** —
+seven after the D2 reversal, eight after the D3 amendment added `trusty-review` —
+and asserts `tm` **present**. A run that does not find `tm` is a **failure**.
 
 **Checkpoint — PASS CONDITION.**
 
-> `vmtest run released` **exits 0**, and the run log shows seven
+> `vmtest run released` **exits 0**, and the run log shows eight
 > `cargo install ... --locked` invocations — including **`cargo install tga
-> --locked`** and **`cargo install trusty-mpm --locked`** — followed by
-> `verify_binaries` reporting **12/12 present**, with `tm` and `trusty-mpm`
+> --locked`**, **`cargo install trusty-mpm --locked`** and **`cargo install
+> trusty-review --locked`** — followed by `verify_binaries` reporting
+> **13/13 present**, with `tm` and `trusty-mpm`
 > explicitly among them, and `tctl stack doctor --json` reporting `trusty-mpm` as
 > installed.
 
@@ -1378,8 +1414,8 @@ asserts `tm` **present**. A run that does not find `tm` is a **failure**.
   - **Pattern (a) means crates.io and nothing else** (DOC-1 D1). `install.sh` and
     prebuilt release tarballs are out of scope; the crates.io path is the only one
     grounded in measurement (`cargo install tga --locked`, 131 s, 211 deps, 4 vCPU).
-- **Acceptance:** the run log shows seven `cargo install <pkg> --locked` lines
-  whose package names are exactly `tsv_scope_packages`' seven values, `tga` among
+- **Acceptance:** the run log shows eight `cargo install <pkg> --locked` lines
+  whose package names are exactly `tsv_scope_packages`' eight values, `tga` among
   them.
 - **Depends:** P6-T5
 
@@ -1550,14 +1586,16 @@ now replace.
   previously read *"Seven crates in scope; `trusty-mpm` is a documented gap in
   pattern (a) only (`publish = false`)"* — the superseded premise, surviving in the
   index because the reversal amended DOC-1 and DOC-2 but not their README. It now
-  states that all three patterns cover all seven crates and that `trusty-mpm` is
-  published at v1.0.2. Confirm that is still what it says, and that nothing added
+  states that all three patterns cover all **eight** crates (D3 was widened to
+  include `trusty-review` on 2026-07-31, §A.1b) and that `trusty-mpm` is published at
+  v1.0.2 and `trusty-review` at v0.10.1. Confirm that is still what it says, and that nothing added
   during Phases 1–8 reintroduced the old claim anywhere in the doc set. **If it is
   already correct, this task delivers no diff — that is the expected outcome, not a
   skipped task.**
 - **Acceptance:** `git grep -n 'publish = false'
   docs/research/tart-vm-testing-harness/` returns no line claiming `trusty-mpm` is
-  unpublished; the README's short version says seven crates in all three patterns.
+  unpublished; the README's short version says **eight** crates in all three
+  patterns, and names both `trusty-mpm` and `trusty-review`.
 - **Depends:** —
 
 ### P8-T6 — Update the MANIFEST (final)
@@ -1635,13 +1673,15 @@ stale copy of DOC-2 needs to be able to tell which is which.
 - **What the engineer does now:** implement the amended predicate. There is no
   decision left to make and nothing to record as a deviation.
 
-### §F-3 — The twelve in-scope rows contain only seven distinct crate directories
+### §F-3 — The thirteen in-scope rows contain only eight distinct crate directories
 
 - **Where:** DOC-2 §12.5's skeleton loops `for _dir in $(tsv_scope_crate_dirs)` —
   "column 2 where in_scope=yes" — and calls `install_from_path` once per value.
-  There are **twelve** such rows and **seven** distinct directories: `trusty-search`
-  appears twice, `trusty-memory` three times, `trusty-installer` twice,
-  `trusty-mpm` twice. **DOC-2 never says to deduplicate.**
+  There are **thirteen** such rows and **eight** distinct directories:
+  `trusty-search` appears twice, `trusty-memory` three times, `trusty-installer`
+  twice, `trusty-mpm` twice, and four crates once each. **DOC-2 never says
+  "deduplicate" in those words** — see below for the four places it says it in
+  other words.
 - **Why it matters:** taken literally, the scenario runs `cargo install --path` on
   `trusty-memory` three times. Under a shared `CARGO_TARGET_DIR` the repeats are
   mostly cheap, but they are minutes of confusing duplicate log output, and they
@@ -1736,7 +1776,7 @@ stale copy of DOC-2 needs to be able to tell which is which.
      place DOC-2 is most emphatic that the oracle must not depend on a surface free
      to change underneath it.
   4. Either way, the phase is **not** blocked: RC-1 is a scoped-around dependency
-     (P5-T7), and DOC-1's headline claim — installation succeeds, twelve binaries
+     (P5-T7), and DOC-1's headline claim — installation succeeds, thirteen binaries
      land, `stack doctor` is healthy — does not rest on daemon health.
 - **Record:** MANIFEST Phase 5 Deviations **and** Measurements.
 
@@ -1799,10 +1839,10 @@ stale copy of DOC-2 needs to be able to tell which is which.
 | # | Gap | DOC-2 § | Decision rule |
 |---|---|---|---|
 | a | N2's example hardcodes `/Users/admin/.cargo/bin` while §8.2 makes `guest_home` a tunable | §6.2 vs §8.2 | Compose the probe's PATH from `guest_home`, not the literal. The literal is illustrative; the tunable is normative. |
-| b | Install **order** across the seven crates is unstated | §12.5 | Use TSV row order. Under a shared `CARGO_TARGET_DIR` order is performance-neutral, but `tctl` must exist before N2, and `trusty-installer` precedes N2 in row order already. |
+| b | Install **order** across the eight crates is unstated | §12.5 | Use TSV row order. Under a shared `CARGO_TARGET_DIR` order is performance-neutral, but `tctl` must exist before N2, and `trusty-installer` precedes N2 in row order already. |
 | c | `provision.sh` "may" write `~/.zshenv` — optional, no rule for choosing | §11.4 | Write it. It is measured at 617 ms, it makes a `--keep` VM inspectable, and P8-T1's drill proves nothing depends on it. |
 | d | `vm_boot` writes `tart-run.pid`; nothing says who reaps it | §12.2 | Cleanup does not kill it. The VM stopping is what ends `tart run`; killing the host process is the write-loss hazard by another route. Reap after `vm_wait_for_stopped` returns. |
-| e | Which daemons `stack doctor` will list under a fresh install is not stated | §1.1 | Assert only over `tsv_scope_packages`' seven values. A member `stack doctor` reports that the TSV does not know about is **logged, not asserted** — it is a `--check-table` finding, not a run failure. |
+| e | Which daemons `stack doctor` will list under a fresh install is not stated | §1.1 | Assert only over `tsv_scope_packages`' values (eight today). A member `stack doctor` reports that the TSV does not know about is **logged, not asserted** — it is a `--check-table` finding, not a run failure. |
 | f | Pattern (b) branch selection has no flag | §8.2 | `VMTEST_DEFAULT_BRANCH`, via the mechanical override mapping. No new flag (P6-T3). |
 
 ---

@@ -272,6 +272,29 @@ INTERIM: for each in-scope daemon d expected present under pattern P:
            .status is not one of {"down", "error", "unhealthy"}
 ```
 
+> **`trusty-review` is now one of the daemons this covers.** *(Amended 2026-07-31,
+> D3 widened to eight crates.)* It was previously in this section's four-shape table
+> but out of D3's scope, so the drift hazard above was documented and not asserted
+> against. Now that it is in scope, the INTERIM predicate runs against it like any
+> other in-scope daemon — and **liveness-only remains sufficient**, for two reasons
+> worth stating rather than assuming:
+>
+> 1. **The MCP/HTTP drift is not on the assertion path.** The predicate reads
+>    `GET /health` — the axum handler at
+>    `crates/trusty-review/src/service/handlers.rs:171-186`. The oracle never calls
+>    the MCP `review_health` tool, so the hand-written `json!` literal at
+>    `crates/trusty-review/src/mcp/tools.rs:331-351` and its unconditional `detail`
+>    field cannot affect a result either way. The drift stays a real hazard for MCP
+>    consumers; it is simply not this oracle's hazard.
+> 2. **The predicate touches only fields all four shapes agree on.** It asserts
+>    HTTP 200, parseable JSON, and a non-empty `.status` outside
+>    `{down, error, unhealthy}`. `status` is one of the two fields §1.3 opens by
+>    naming as common to all four daemons; `trusty-review`'s struct carries it.
+>    Nothing in its `dry_run` / `reviewer_model` / `inference` / `deps{…}` tail is
+>    read, so bringing it in scope adds a daemon to the loop and **no new field
+>    dependency**. RC-1 is what would let the oracle assert more, and RC-1's status
+>    is unchanged by this scope decision — it neither becomes more urgent nor less.
+
 This is a **liveness** assertion, not a health-contract assertion. It is
 deliberately weak because a strong assertion here would have to be invented, and
 DOC-1 §7.1's whole argument for JSON-only is that the oracle should not depend on
@@ -991,7 +1014,8 @@ that will be slow.
 ### 9. `expected-binaries.tsv` schema
 
 DOC-1 §7.2 establishes the table as the single authoritative expectation source and
-gives a seed table of seven rows. DOC-1 §7.2's own note flags the `--check-table`
+gives a seed table of eight rows (seven until D3 was widened on 2026-07-31).
+DOC-1 §7.2's own note flags the `--check-table`
 diff source of truth as unnamed and recommends the `[[bin]]` targets. This section
 gives the real schema, the real seed content enumerated from the workspace, and
 confirms the diff source.
@@ -1056,8 +1080,10 @@ which is a further argument for keying on package name.
 #### 9.3 Seed content
 
 Enumerated from the workspace manifests. **27** explicit `[[bin]]` targets across 20
-manifests, plus one implicit target (§9.4) — **28** rows in total. Twelve rows are
-in scope; DOC-1 D3's seven crates produce twelve binaries, not seven.
+manifests, plus one implicit target (§9.4) — **28** rows in total. **Thirteen** rows
+are in scope; DOC-1 D3's **eight** crates produce **thirteen** binaries, not eight.
+The eight in-scope `crate_dir` values are the eight D3 directories — see §12.5 and
+the plan's §F-3 on why the loop over them must deduplicate.
 
 > **Correction, 2026-07-31 — the explicit count read 26.** The prose said "26
 > explicit … plus one implicit", i.e. 27, while the block below it has always had
@@ -1084,6 +1110,7 @@ trusty-installer	trusty-installer	tctl	src/main.rs	-	yes	present	present	present
 tga	trusty-git-analytics	tga	src/main.rs	-	yes	present	present	present
 trusty-mpm	trusty-mpm	tm	src/bin/tm/main.rs	cli	yes	present	present	present
 trusty-mpm	trusty-mpm	trusty-mpm	src/bin/tm/main.rs	cli	yes	present	present	present
+trusty-review	trusty-review	trusty-review	src/main.rs	-	yes	present	present	present
 # --- out of scope per DOC-1 D3; carried so --check-table can detect additions ---
 trusty-agents	trusty-agents	tagent	src/main.rs	-	no	-	-	-
 trusty-agents-ui	trusty-agents/ui/src-tauri	trusty-agents-ui	src/main.rs	-	no	-	-	-
@@ -1099,7 +1126,6 @@ trusty-gworkspace	trusty-gworkspace	trusty-gworkspace-mcp	src/bin/trusty-gworksp
 trusty-kb	trusty-kb	trusty-kb	src/main.rs	-	no	-	-	-
 trusty-mpm-gui	trusty-mpm-gui	trusty-mpm-gui	src/main.rs	-	no	-	-	-
 trusty-publish-guard	trusty-publish-guard	publish-guard	src/main.rs	-	no	-	-	-
-trusty-review	trusty-review	trusty-review	src/main.rs	-	no	-	-	-
 trusty-sld-lint	trusty-sld-lint	sld-lint	src/main.rs	-	no	-	-	-
 ```
 
@@ -1118,11 +1144,21 @@ manifests:
    §7.4 on 2026-07-31**, along with the project's Single-Install sidecar inventory
    checklist (`.claude-mpm/INSTRUCTIONS.md`), which carried the same omission and is
    the likely origin of it.
-2. **`trusty-review` is a publishable crate with a daemon and a `/health` endpoint
-   (§1.3), and it is *not* in DOC-1 D3's seven.** Carried as `in_scope=no` here,
-   faithfully to D3. Whether D3's scope should include it is a design question this
-   document does not decide, but it should be decided knowingly rather than by
-   omission.
+2. ~~**`trusty-review` is a publishable crate with a daemon and a `/health`
+   endpoint (§1.3), and it is *not* in DOC-1 D3's seven.**~~ **Decided and closed
+   2026-07-31 — `trusty-review` is IN scope.** This note asked that the question be
+   "decided knowingly rather than by omission"; the owner decided it, and **DOC-1 D3
+   is amended to eight crates** with a dated amendment recording the reasoning. Its
+   row above now carries `in_scope=yes` with `present` in all three `expect_*`
+   columns, on this evidence: `crates/trusty-review/Cargo.toml` declares
+   `publish = true` **explicitly**, and `cargo search trusty-review --limit 5`
+   returns `trusty-review = "0.10.1"`, so pattern (a) can install it. It has exactly
+   **one** `[[bin]]` (`name = "trusty-review"`, `path = "src/main.rs"`,
+   `required-features = []`, `Cargo.toml:16-19`), so it adds one in-scope row and
+   **no** `verify_single_install` call — see §12.5. Its `/health` route
+   (`crates/trusty-review/src/service/mod.rs:130`) is gated behind `http-server`,
+   which is in the crate's `default` set, so a plain `cargo install` produces a
+   binary whose serve path exists; the RC-1 consequence is recorded in §1.3.
 3. The `trusty-mpm` rows are discussed in §9.5.
 
 #### 9.4 `req_features` and the implicit target
@@ -1141,6 +1177,16 @@ a green install with a missing daemon, which is precisely the DOC-1 §7.4 failur
 mode ("still installs successfully, still passes a naive smoke test, leaves the
 user with a stack that cannot start its daemons"). Carrying the column lets
 `--check-table` flag the day a gating feature leaves `default`.
+
+**Still four after the D3 amendment, and `trusty-review` shows why the column means
+exactly what it says.** *(Added 2026-07-31.)* `trusty-review` joined the in-scope set
+with `required-features = []`, so it is not a fifth gated binary and its row reads
+`-`. Its `/health` route *is* compiled only under `http-server` — but that gates the
+*code inside* the binary, not the *target*, so cargo builds and installs
+`trusty-review` regardless and `req_features` is correctly `-`. The column records
+`[[bin]] required-features` and nothing else; reading it as "features this binary's
+behaviour depends on" would be a different column with a different source of truth,
+and `--check-table` could not derive it.
 
 **The implicit target.** `crates/trusty-agents-local` has a `src/main.rs` and **no
 `[[bin]]` section**, so cargo auto-infers a binary named `trusty-agents-local`. It
@@ -1178,7 +1224,9 @@ right call for a document that could only flag the premise. It is the wrong call
 that the premise has been checked and D2 amended: an assertion known in advance to
 be false is not a safety net, it is a scheduled failure. Both `trusty-mpm` rows
 above now carry **`expect_a = present`**, matching DOC-1 D2 and §7.5 as amended, and
-all twelve in-scope binaries are expected present under all three patterns.
+all **thirteen** in-scope binaries are expected present under all three patterns
+(twelve when this paragraph was written; the thirteenth is `trusty-review`, added
+by the D3 amendment of the same date — §9.3 note 2).
 
 The `expect_*` columns and the pattern-aware oracle **stay** regardless. With the
 gap dissolved no in-scope row currently diverges across patterns, but the columns
@@ -1267,12 +1315,14 @@ into a long interval it happens to land, in exchange for saving a handful of
 | `tart clone` | `vm_clone` | **60 s** | 0.31 s measured, APFS CoW (`vm-install-probe-findings.md:875`). ~190× — deliberately loose because §3.3's by-construction variant may pull an image on the first run, which is unmeasured. |
 | `provision.sh` | one `tart exec` | **300 s** | 30.079 s measured (`vm-install-probe-findings.md:857-858`, `PROVISION_MS=30079`). 10×, because the step is network-bound (rust toolchain download alone is 20.8 s, `:854`) and a slow link is not a defect. |
 | single-crate install | one `tart exec` per crate | **900 s** | 112 s for `trusty-search`, 409 dependency crates compiled, 8 vCPU (`vm-install-probe-findings.md:934-935`); 131 s for `cargo install tga --locked` at 4 vCPU (DOC-1 §9). ~8× the largest measured single-crate build. |
-| full-stack scenario | scenario wall clock | **2700 s** (45 min) | DOC-1 §9 extrapolates 4–8 min **and labels it low-confidence, for six crates when D3 scopes seven**. ~5.6× the upper bound. |
+| full-stack scenario | scenario wall clock | **2700 s** (45 min) | DOC-1 §9 extrapolates 4–8 min **and labels it low-confidence, for six crates when D3 now scopes eight**. ~5.6× the upper bound. |
 | guest `git clone` (pattern b) | one `tart exec` | **300 s** | 50.131 s measured (`vm-install-probe-findings.md:942`, `GIT_CLONE_MS=50131`). ~6×. |
 
 **Why the full-stack multiple is so loose, stated as reasoning rather than
 precision.** DOC-1 §9 is explicit that 4–8 minutes is an extrapolation, that it was
-computed for six crates against a seven-crate scope, and that it should be treated
+computed for six crates against what is now an **eight**-crate scope (six when the
+range was computed, seven after the D2 reversal, eight after the 2026-07-31 D3
+amendment), and that it should be treated
 as a low-confidence planning estimate until a full-stack run is actually timed. A
 tight timeout over a low-confidence estimate does not enforce a budget; it
 manufactures flaky failures that get "fixed" by raising the timeout. 45 minutes is
@@ -1909,8 +1959,20 @@ Recorded in the same register as DOC-1 §14, so they are not lost.
   fallback.
 - ~~**`trusty-mpm` `publish` premise** (§9.5).~~ **Closed 2026-07-31.** The premise
   was false — no `publish` key, and `cargo search trusty-mpm` returns `1.0.2`. DOC-1
-  D2 is reversed, D3 scopes all seven crates into pattern (a), DOC-1 §7.5 inverts to
-  asserted-present, and the seed table's `expect_a` is now `present`.
+  D2 is reversed, D3 scopes `trusty-mpm` into pattern (a) along with the rest of the
+  stack, DOC-1 §7.5 inverts to asserted-present, and the seed table's `expect_a` is
+  now `present`. *(That closure put the stack at seven crates; a separate D3
+  amendment the same day took it to eight — see the next item.)*
+- ~~**`trusty-review` in or out of D3's scope** (§9.3 note 2).~~ **Closed
+  2026-07-31 by owner decision — IN scope.** §9.3 note 2 asked that this be "decided
+  knowingly rather than by omission", and it was: **DOC-1 D3 is amended to eight
+  crates**, with a dated amendment recording the reasoning. `publish = true` is
+  explicit in the manifest and `cargo search trusty-review` returns `0.10.1`, so
+  pattern (a) reaches it; it has one `[[bin]]`, so it adds one in-scope row
+  (thirteen total) and no `verify_single_install` call. Its `/health` now falls under
+  the oracle's INTERIM liveness predicate, which §1.3 records as sufficient — the
+  MCP/HTTP drift noted there is off the assertion path. **RC-1 is unaffected**: no
+  new field dependency was introduced.
 - ~~**`trusty-memory-mcp-bridge` missing from DOC-1 §7.2** (§9.3).~~ **Closed
   2026-07-31.** DOC-1 §7.2's table now lists all three `trusty-memory` binaries, and
   the project's Single-Install sidecar inventory checklist

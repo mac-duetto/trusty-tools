@@ -132,7 +132,8 @@ not been completed is not complete, regardless of what its code does.
 - **Pattern (c) tar transport, end-to-end.** Never measured. **Phase 1 is the
   measurement** (DOC-1 D4, recorded product-owner decision of 2026-07-31).
 - **Full-stack timing.** The 4–8 min figure is an extrapolation for six crates
-  against a seven-crate scope. **Replaced by plan P5-T8.**
+  against what is now an eight-crate scope (widened twice on 2026-07-31: D2's
+  reversal, then D3's `trusty-review` addition). **Replaced by plan P5-T8.**
 - **Daemon time-to-ready.** Wholly unmeasured; DOC-2 §10.1's 60 s maximum is a
   guess. Revisited in P8-T2.
 
@@ -212,10 +213,10 @@ not been completed is not complete, regardless of what its code does.
 
 - **State:** `not-started`
 - **Pass condition:** `vmtest run local` **exits 0**, and the run log shows:
-  (i) all **seven** crates installed via `cargo install --path`, each preceded by a
+  (i) all **eight** crates installed via `cargo install --path`, each preceded by a
   `rustc --version` line emitted from inside that crate's directory;
-  (ii) `verify_binaries` reporting **12/12 in-scope binaries present**;
-  (iii) `tctl stack doctor --json` parsed, with every one of the seven packages —
+  (ii) `verify_binaries` reporting **13/13 in-scope binaries present**;
+  (iii) `tctl stack doctor --json` parsed, with every one of the eight packages —
   **including `trusty-mpm`** — satisfying `health ∈ {healthy, stale}`,
   `on_path == true`, `version != null`;
   (iv) `verify_single_install` passing for `trusty-search` (2 binaries),
@@ -239,8 +240,8 @@ not been completed is not complete, regardless of what its code does.
 ## Phase 6 — Pattern (b): branch
 
 - **State:** `not-started`
-- **Pass condition:** `vmtest run branch` **exits 0** with the same twelve-binary
-  and seven-package `stack doctor` assertions as Phase 5, and the run log shows a
+- **Pass condition:** `vmtest run branch` **exits 0** with the same thirteen-binary
+  and eight-package `stack doctor` assertions as Phase 5, and the run log shows a
   guest-side `git clone` (no host→guest byte stream) and the checked-out branch
   name.
 - **Observed result:** — not run
@@ -256,10 +257,11 @@ not been completed is not complete, regardless of what its code does.
 ## Phase 7 — Pattern (a): released
 
 - **State:** `not-started`
-- **Pass condition:** `vmtest run released` **exits 0**, and the run log shows seven
+- **Pass condition:** `vmtest run released` **exits 0**, and the run log shows eight
   `cargo install ... --locked` invocations — including **`cargo install tga
-  --locked`** and **`cargo install trusty-mpm --locked`** — followed by
-  `verify_binaries` reporting **12/12 present**, with `tm` and `trusty-mpm`
+  --locked`**, **`cargo install trusty-mpm --locked`** and **`cargo install
+  trusty-review --locked`** — followed by `verify_binaries` reporting
+  **13/13 present**, with `tm` and `trusty-mpm`
   explicitly among them, and `tctl stack doctor --json` reporting `trusty-mpm` as
   installed.
 - **Observed result:** — not run
@@ -301,7 +303,10 @@ A future agent picking this up, in order:
    [DOC-2](../02-design/02-harness-contracts.md) in full. **Do not re-litigate a
    settled decision**; note in particular that D2/D3 were **reversed on
    2026-07-31** — `trusty-mpm` is published at v1.0.2, pattern (a) covers all
-   **seven** crates, and `tm` is asserted **present**, not absent.
+   **seven** crates, and `tm` is asserted **present**, not absent. Note that **D3
+   was widened again the same day** — `trusty-review` was added by owner decision,
+   so the scope is **eight** crates and **thirteen** in-scope binaries (plan §A.1b).
+   A doc that says "seven" is recording the state between the two amendments.
 2. Read [the plan](./01-implementation-plan.md), including **§F** — the flagged
    under-specifications and their decision rules. If you hit a decision the plan
    and DOC-2 do not settle and §F does not cover, **stop and record it here**
