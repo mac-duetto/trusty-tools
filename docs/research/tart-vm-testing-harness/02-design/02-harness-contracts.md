@@ -165,11 +165,12 @@ Three properties the oracle must respect:
   key is present and non-empty, and must **not** compare it against a release
   label, until the real `stack_version` lands.
 
-**Fields `verify.sh` reads:** `tool_version` (asserted equal to the crate version
-in `expected-binaries.tsv` for `trusty-installer` under patterns (b)/(c); asserted
+**Fields `verify.sh` reads:** `tool_version` (asserted equal to the version declared
+by the source tree the scenario installed from, under patterns (b)/(c); asserted
 merely present under pattern (a), where the published version legitimately differs
-from the working tree), `contract_floor`, `contract_target` (asserted integers, and
-`floor <= target`), `stack_version` (asserted present and non-empty only).
+from the working tree — see the amendment below), `contract_floor`,
+`contract_target` (asserted integers, and `floor <= target`), `stack_version`
+(asserted present and non-empty only).
 
 **Pass predicate:**
 
@@ -177,8 +178,42 @@ from the working tree), `contract_floor`, `contract_target` (asserted integers, 
 PASS  iff  tool_version is a non-empty string
      and   stack_version is a non-empty string
      and   contract_floor and contract_target are integers with floor <= target
-     and   (pattern ∈ {b,c}) → tool_version == tsv_version(trusty-installer)
+     and   (pattern ∈ {b,c}) → tool_version == source_tree_version(trusty-installer)
 ```
+
+> **Amended 2026-07-31 — `tsv_version(...)` removed.** The last clause previously
+> read `tool_version == tsv_version(trusty-installer)`, and the prose above sourced
+> the expected version from `expected-binaries.tsv`. **That file has no version
+> column** — §9.1 defines exactly nine and §9.3's seed rows carry no version value —
+> so the clause addressed data that does not exist, and two contract sections of
+> this document contradicted each other. The cross-check itself is worth keeping:
+> under (b)/(c) it is what distinguishes the `tctl` the scenario just built from one
+> that was somehow already there. It is therefore **restated against a source that
+> genuinely carries a version**, not dropped:
+>
+> ```
+> source_tree_version(p) := the `version` cargo reports for package p in the source
+>                           tree the scenario installed from — read with
+>                           `cargo metadata --no-deps --format-version 1` in the
+>                           guest at $VMTEST_GUEST_SRC via vm_exec, parsed
+>                           host-side with jq (§JSON parsing dependency).
+> ```
+>
+> **A tenth column was deliberately not added.** §9.6 states the rule this follows:
+> the TSV's non-derivable columns are *"human judgments about the harness's scope,
+> not facts about the workspace"*. A crate version is the opposite — a fact that
+> changes on every release — and hand-maintaining it in the expectation table would
+> guarantee exactly the staleness DOC-1 §7.2 created that table to prevent. It is
+> also the same source `--check-table` already reads (§9.6), so no new dependency
+> and no second parser.
+>
+> **Why the guest's tree and not the host's.** The host's `cargo metadata` is
+> equivalent under pattern (c) by construction, and simply wrong under pattern (b),
+> whose guest-side clone is of `default_branch` (§8.2) and need not match the host
+> working tree at all. Reading the tree that was actually built is correct for both,
+> and under (c) it is a free integrity check on the tar transport DOC-1 §14 records
+> as unmeasured. Pattern (a) is unchanged: no comparison, because there is no source
+> tree to compare against.
 
 #### 1.3 Daemon health JSON — **REQUIRED-CONTRACT, not yet implemented**
 
@@ -978,6 +1013,15 @@ Tab-separated, one header row, `#` comments permitted, `LF` line endings.
 | 9 | `expect_c` | `present` \| `absent` \| `-` (pattern (c), local source) |
 
 `-` in `expect_*` is only valid where `in_scope` is `no`.
+
+> **Nine columns, and no version column — deliberately.** *(Amended 2026-07-31.)*
+> §1.2's version cross-check previously named a `tsv_version(...)` accessor over
+> this file. This schema has never had a version column and is not gaining one; the
+> cross-check now reads `cargo metadata` from the source tree the scenario installed
+> from, per §1.2's amendment. A version belongs to the class §9.6 excludes from this
+> file in the other direction: it is a *fact about the workspace*, derivable and
+> release-volatile, and a hand-maintained copy of it would be stale one release
+> later.
 
 **Why an `in_scope` column rather than two files.** `--check-table` must diff
 against **every** `[[bin]]` in the workspace or it cannot detect a newly added
