@@ -365,14 +365,15 @@ This is the task the whole phase exists for.
   state**, then `tart delete`. Do not trust the stop's return, and do not kill the
   `tart run` process on failure.
   - **§F-9 was RESOLVED at source on 2026-07-31** — the initiator is specified, not
-    left to you. What is still open is the **judgment call DOC-2 flags**: a
-    guest-side `shutdown -h now` was never measured and is not specified. Observe
-    how the specified path behaves here and record it (P1-T9); propose the
-    alternative only with that observation behind it.
+    left to you, and a guest-side `shutdown -h now` is **forbidden** (DOC-2 §12.2,
+    amended 2026-07-31). Do not substitute one, and do not read this task as
+    validating the choice of initiator: that question is closed.
 - **Acceptance:** after the script exits, `tart list | grep vmtest-spike` produces
   **no output**, and the script's exit status is 0. Record the wall clock between
   `vm_request_stop` returning and `tart list` first reporting `stopped` — that
-  interval is the only unmeasured number in the teardown path.
+  interval is the only unmeasured number in the teardown path, and it is worth
+  measuring on its own account: DOC-2 §10.1's 120 s maximum is a judgment call
+  standing in for a worst-case flush duration nobody has observed.
 - **Depends:** P1-T7
 
 ### P1-T9 — Record the two measurements this phase produces
@@ -541,7 +542,9 @@ debugging argument parsing while a VM boots.
     (§12.2, added by the 2026-07-31 §F-9 amendment). The guest-side `sync; sync`
     that precedes the stop is logged-but-not-fatal, because cleanup runs on paths
     where the guest is already unreachable. The completion signal is
-    `vm_wait_for_stopped`, never the stop's return.
+    `vm_wait_for_stopped`, never the stop's return. A guest-side `shutdown -h now`
+    is **forbidden** as the initiator (§12.2, amended 2026-07-31) — do not reach
+    for one here.
   - Build the watchdog from shell primitives: background the command, record the
     PID, poll `kill -0 <pid>` at the site's interval until the deadline, then kill
     and reap. **Do not reach for `timeout`/`gtimeout`** — that adds a Homebrew
@@ -1761,13 +1764,16 @@ stale copy of DOC-2 needs to be able to tell which is which.
   `tart run` is repairing, which DOC-1 §4.1 forbids. See **DOC-2 §12.2**
   (`vm_request_stop`, and the note beneath the module tables) and **§Shell
   discipline**, cleanup properties 4 and 5.
-- **The one thing still open, and it is flagged in DOC-2 as a judgment call:**
-  a *guest-side* `shutdown -h now` over `tart exec` would be the more obviously
-  graceful initiator, but it was never measured — Track A used it over **SSH**,
-  which DOC-1 §5.1 excludes as a transport, and it requires passwordless `sudo` in
-  the guest. It is **not** specified. **Validate the specified path in Phase 1**
-  (P1-T8) and, if a guest-side shutdown proves more reliable, record the observation
-  that motivated the change before adopting it.
+- **The guest-side alternative is forbidden, not pending.** *(Product-owner
+  decision, 2026-07-31.)* A *guest-side* `shutdown -h now` over `tart exec` looks
+  like the more obviously graceful initiator, and DOC-2 originally flagged the
+  choice as a judgment call to validate on the first real run. DOC-2 §12.2 now
+  **prohibits it outright**: its only appearance in the corpus is the superseded
+  Track A script (`../01-research/vm-install-testing-trackA-fable.md:299`), issued
+  over **SSH**, which DOC-1 §5.1 excludes as a transport, and it requires
+  passwordless `sudo` in the guest, which was never measured. `vm_request_stop` is
+  the only permitted initiator. **Nothing is left open here for the engineer to
+  decide.**
 - **Record:** MANIFEST Phase 1 Measurements — the observed teardown behaviour from
   the first real run, pasted verbatim. This is now an observation to capture, not a
   decision to make.

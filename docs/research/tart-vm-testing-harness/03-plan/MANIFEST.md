@@ -135,11 +135,6 @@ not been completed is not complete, regardless of what its code does.
   against a seven-crate scope. **Replaced by plan P5-T8.**
 - **Daemon time-to-ready.** Wholly unmeasured; DOC-2 §10.1's 60 s maximum is a
   guess. Revisited in P8-T2.
-- **Guest-side graceful shutdown.** DOC-2 §12.2's `vm_request_stop` issues
-  `tart stop` and discards the status — the only shutdown path the research
-  measured. A guest-side `shutdown -h now` over `tart exec` is unmeasured and
-  deliberately unspecified. **Observed in P1-T8**; adopt only with the observation
-  behind it.
 
 ---
 

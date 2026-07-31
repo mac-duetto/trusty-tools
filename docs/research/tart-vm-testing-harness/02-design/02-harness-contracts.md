@@ -1509,16 +1509,24 @@ VM, and does not `tart suspend` (DOC-1 §8.2). `vmtest clean` will refuse it in 
 Force-killing a way to a clean `tart list` would be repairing, which DOC-1 §4.1
 forbids in the one place this design is most emphatic about it.
 
-> **Judgment call, flagged — the initiator is `tart stop`, not a guest-side
-> shutdown.** A guest-side `shutdown -h now` over `tart exec` would be the more
-> obviously "graceful" mechanism, and it is what the superseded Track A script
-> reached for (`../01-research/vm-install-testing-trackA-fable.md:299`) — but over
-> **SSH**, which DOC-1 §5.1 excludes as a transport, and requiring passwordless
-> `sudo` in the guest, which the research never measured. Specifying it here would
-> be inventing a mechanism. The option above is the narrowest one consistent with
-> what *was* measured. If a guest-side shutdown proves more reliable in practice
-> that is a legitimate refinement — but it must arrive with the observation that
-> motivated it, validated on the first real run, not adopted on intuition.
+**A guest-side shutdown is forbidden as the initiator.** *(Amended 2026-07-31.)*
+This was previously recorded here as a judgment call to be validated on the first
+real run. It is now settled, and it is a prohibition — stated in the register DOC-1
+§8.1 and §8.2 use, because it is the same kind of rule.
+
+**Rule:** `vm_request_stop`'s flush-then-`tart stop` sequence is the **only**
+permitted shutdown initiator. No part of the harness may ask the guest to shut
+itself down — no `shutdown -h now`, no `halt`, no `poweroff` — over `tart exec` or
+any other channel.
+
+**Evidence:** the guest-side alternative appears exactly once in the research
+corpus, in the **superseded** Track A script
+(`../01-research/vm-install-testing-trackA-fable.md:299`), where it is issued over
+**SSH** — a transport DOC-1 §5.1 excludes outright. It also requires passwordless
+`sudo` in the guest, which the research never measured and never recorded as
+present on `tahoe-base`. There is therefore no measurement behind it at all, on
+either the mechanism or its precondition. Adopting it would be inventing a
+mechanism, and this document does not specify mechanisms it cannot ground.
 
 **`lib/provision.sh`**
 
@@ -1844,11 +1852,12 @@ Recorded in the same register as DOC-1 §14, so they are not lost.
 - **Full-stack watchdog is 5.6× a low-confidence estimate** (§10.2). Tighten once
   the first pattern-(c) full-stack run is timed, as DOC-1 §9 already requests.
 - **Daemon time-to-ready** (§10.1). Wholly unmeasured; the 60 s maximum is a guess.
-- **Guest-side graceful shutdown** (§12.2, added 2026-07-31). `vm_request_stop`
-  issues `tart stop` and discards the status, because that is the only shutdown path
-  the research measured. A guest-side `shutdown -h now` over `tart exec` is the
-  plausible alternative and was never measured — it needs an observation from a real
-  run before it is adopted, not a preference.
+- ~~**Guest-side graceful shutdown** (§12.2, added 2026-07-31).~~ **Closed
+  2026-07-31.** Not an open question and not a judgment call: a guest-side
+  `shutdown -h now` is **forbidden** as the shutdown initiator (§12.2). Its only
+  appearance in the corpus is the superseded Track A script issued over **SSH**,
+  which DOC-1 §5.1 excludes, and it requires passwordless `sudo` in the guest, which
+  was never measured. `vm_request_stop` is the only permitted initiator.
 
 ---
 
