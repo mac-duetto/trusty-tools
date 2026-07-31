@@ -1533,4 +1533,247 @@ now replace.
   state; the `Plan status` line names RC-1 explicitly.
 - **Depends:** P8-T4, P8-T5
 
-<!-- APPEND-POINT -->
+---
+
+## F. FLAGGED — where DOC-2 is under-specified
+
+DOC-2 is unusually complete: twelve numbered contracts, a traceability table back
+to DOC-1, and its own open-items list. The items below are what it nonetheless
+leaves an implementing engineer to decide, found by walking every task in this
+plan and asking *"could a zero-context engineer execute this from DOC-2 alone?"*.
+
+**None of these is filled in with an invented contract.** Each gets a **decision
+rule** — a rule that resolves the gap by *observation* or by *the narrowest reading
+of what DOC-2 already says*, never by taste — plus a requirement to record the
+resolution in the MANIFEST. Where a gap cannot be resolved by observation, the
+decision rule says **stop and record**, not **choose something**.
+
+> Honest uncertainty is this doc set's established register. A plan that silently
+> filled twelve gaps would read more confident and be worth less.
+
+---
+
+### §F-1 — `run --dry-run` is listed but never defined
+
+- **Where:** DOC-2 §8.2 lists `--dry-run` among the five CLI flags the driver
+  accepts. DOC-2 §5.4 defines `clean --dry-run` precisely. **Nothing anywhere
+  defines what `vmtest run <pattern> --dry-run` does.**
+- **Why it matters:** this plan uses it as Phase 2's checkpoint, because it is the
+  only way to exercise the entire host-side path without a guest.
+- **Decision rule (narrowest reading):** `run --dry-run` performs **preflight**,
+  prints the **effective-configuration banner** (§8.3), acquires and releases the
+  run-registry entry (§4.3), and **stops before `tart clone`**. It creates no VM
+  and touches no guest. This is the largest prefix of the run lifecycle that
+  involves no VM, which is the only reading consistent with `clean --dry-run`
+  ("full classification, no destruction"). **Do not extend it further** — a
+  `--dry-run` that clones and boots is not a dry run.
+- **Record:** MANIFEST Phase 2 Deviations, as `§F-1 resolved by narrowest reading`.
+
+### §F-2 — §1.2's predicate references a TSV column that §9.1 does not define
+
+- **Where:** DOC-2 §1.2's pass predicate ends `(pattern ∈ {b,c}) → tool_version ==
+  tsv_version(trusty-installer)`, and §1.2's prose says `tool_version` is *"asserted
+  equal to the crate version in `expected-binaries.tsv`"*. But **§9.1's schema has
+  nine columns and none of them is a version**, and §9.3's seed rows carry no
+  version value. `tsv_version()` has no source.
+- **Why it matters:** it is a direct contradiction between two contract sections,
+  not an omission — following either one literally breaks the other.
+- **Decision rule (observation, no new column):** source the expected version from
+  **`cargo metadata --no-deps`** at run time — the same source `--check-table`
+  already uses (§9.6), already a host dependency, and by construction never stale.
+  **Do not add a tenth column.** §9.6 is explicit that the TSV's non-derivable
+  columns are *"human judgments about the harness's scope, not facts about the
+  workspace"*; a version is the opposite — a fact that changes on every release,
+  and putting it in a hand-maintained file would guarantee drift in exactly the way
+  §7.2 exists to prevent.
+- **Caveat:** this is a **judgment call by this plan**, resolving a contradiction
+  between DOC-2 §1.2 and §9.1. Either section could be amended instead. Record it
+  and let the amendment be a deliberate later PR.
+- **Record:** MANIFEST Phase 5 Deviations.
+
+### §F-3 — The twelve in-scope rows contain only seven distinct crate directories
+
+- **Where:** DOC-2 §12.5's skeleton loops `for _dir in $(tsv_scope_crate_dirs)` —
+  "column 2 where in_scope=yes" — and calls `install_from_path` once per value.
+  There are **twelve** such rows and **seven** distinct directories: `trusty-search`
+  appears twice, `trusty-memory` three times, `trusty-installer` twice,
+  `trusty-mpm` twice. **DOC-2 never says to deduplicate.**
+- **Why it matters:** taken literally, the scenario runs `cargo install --path` on
+  `trusty-memory` three times. Under a shared `CARGO_TARGET_DIR` the repeats are
+  mostly cheap, but they are minutes of confusing duplicate log output, and they
+  make the Single-Install Convention gate (DOC-1 §7.4) meaningless — installing a
+  crate once per sidecar cannot prove that installing it *once* yields all of them.
+- **Decision rule (forced by DOC-1 §7.4):** deduplicate. `tsv_scope_crate_dirs`
+  emits **unique** `crate_dir` values in first-appearance order, and each in-scope
+  crate is installed exactly once. The gate's entire claim is that one install
+  yields every sidecar, so installing more than once would invalidate the
+  assertion it feeds.
+- **Record:** MANIFEST Phase 4 Deviations.
+
+### §F-4 — The negative-probe functions have no assigned module
+
+- **Where:** DOC-2 §12.5 calls `negative_probe_n2`, and §6.2 specifies both N1 and
+  N2 in full. **§12.2's module surfaces list `vm.sh`, `provision.sh`, `source.sh`,
+  `verify.sh` — and neither probe appears in any of the four tables.** DOC-1 §3's
+  component tree has no fifth module.
+- **Decision rule (narrowest reading):** put both in **`lib/verify.sh`**. They are
+  assertions with pass predicates (§6.2 states both as `PASS iff …`), which is
+  exactly what `verify.sh` is for (DOC-1 §3.5, "assertion oracle"). They die with
+  **30**, not 60, because §2 classifies them as their own phase — that is a
+  property of the exit code, not of the file. Adding a fifth `lib/` module would
+  depart from DOC-1 §3's component tree, which DOC-2 §12.2 explicitly declines to
+  do unilaterally in an analogous case (the `install.sh` naming tension).
+- **Record:** MANIFEST Phase 3 Deviations.
+
+### §F-5 — No module owns the TSV reader, and three files need it
+
+- **Where:** DOC-2 §3.1 justifies the shared TSV format with *"one parser, three
+  files… all read by the same handful of `awk` lines"*, and §8.1 repeats it. But
+  §12.2's four module surfaces contain **no TSV or config function**, and §12.5's
+  skeleton calls `tsv_scope_crate_dirs` and `log` without saying where either is
+  defined.
+- **Why it matters:** under bash 3.2 this parser **is** the harness's data
+  structure layer (§Shell discipline: "the substitute for a hash"). It is not a
+  detail.
+- **Decision rule (narrowest reading):** define `conf_get`, `tsv_*`, `log`, and
+  `die` in the **`vmtest` driver itself**, above the `lib/` sourcing. They are
+  driver infrastructure, not OS-boundary, provisioning, transport, or assertion
+  logic, so none of the four modules is their home; and DOC-2 §12.4 already places
+  `die` in the driver by showing it outside any module table. `lib/` files may call
+  them, since `set` and function definitions are shell-global by the time `lib/` is
+  sourced.
+- **Alternative, permitted, must be recorded:** a fifth `lib/tsv.sh`. It is a
+  departure from DOC-1 §3's component tree and therefore needs a MANIFEST deviation
+  entry, but it changes no scenario, for the same reason DOC-2 §12.2 gives about a
+  future `lib/install.sh`: scenarios call functions, not files.
+- **Record:** MANIFEST Phase 2 Deviations.
+
+### §F-6 — Scenario dispatch is unspecified
+
+- **Where:** DOC-2 §12.5 says the scenario file is *"sourced by the driver after
+  provisioning"* and defines `scenario_install_local()`. **Nothing specifies how
+  the driver maps the pattern argument (`local` | `branch` | `released`) to a file
+  path and a function name.**
+- **Decision rule (derivable, low stakes):** `vmtest run <p>` sources
+  `vmtest-harness/scenarios/install-<p>.sh` and calls
+  `scenario_install_<p>()`. Both names are already fixed by DOC-1 §3 (the file
+  names) and DOC-2 §12.5 (the function name for `local`); the mapping is the only
+  one consistent with both. An unknown pattern is **exit 2** (§2: "unknown scenario
+  name").
+- **Record:** noted here; a MANIFEST entry is not required unless you deviate.
+
+### §F-7 — Daemon start and port discovery are unspecified (interacts with RC-1)
+
+- **Where:** DOC-2 §1.3's INTERIM predicate says *"for each in-scope daemon d
+  expected present under pattern P: `GET /health` returns HTTP 200"*. It does not
+  say **which** daemons are in scope as daemons (the TSV's `in_scope` column marks
+  *binaries*, not daemons), **how they are started**, **on what host/port**, or
+  **how the port is discovered**. §10.1 gives a poll interval and maximum for
+  "daemon health" and labels the maximum *"wholly unmeasured"*.
+- **What the repo offers, as facts to read — not as a contract to assume:**
+  `tctl stack doctor --json` reports a boolean `port_recorded` per member (§1.1)
+  but **not the port value**; `tctl` has stack lifecycle subcommands dispatched at
+  `crates/trusty-installer/src/main.rs:143` (`lifecycle::run_start`), `:147`
+  (`run_stop`), `:151` (`run_restart`), and a `port` subcommand at `:171`
+  (`port::run(member, addr, json_port, json)`); DOC-1 §8.7 confirms `launchctl
+  bootstrap gui/$(id -u)` works under `tart exec`, which is what makes any of this
+  viable at all.
+- **Decision rule (observation, with an explicit stop branch):**
+  1. Read `crates/trusty-installer/src/commands/port.rs` and `lifecycle.rs`.
+     Determine whether a **machine-readable** (`--json`) start command and a
+     **machine-readable** per-member port exist.
+  2. **If both exist:** use them. Start via the JSON lifecycle command, discover
+     each port via the JSON port command, and apply §1.3's INTERIM predicate.
+     Record the exact commands in the MANIFEST.
+  3. **If either does not:** **stop, and record `verify_daemon_liveness` as
+     BLOCKED** with the verbatim reason. The function stays present, logs
+     `SKIPPED (RC-1 / §F-7)` loudly, and returns 0. **Do not hardcode a port map**
+     — that would be inventing the contract RC-1 exists to request, in the one
+     place DOC-2 is most emphatic that the oracle must not depend on a surface free
+     to change underneath it.
+  4. Either way, the phase is **not** blocked: RC-1 is a scoped-around dependency
+     (P5-T7), and DOC-1's headline claim — installation succeeds, twelve binaries
+     land, `stack doctor` is healthy — does not rest on daemon health.
+- **Record:** MANIFEST Phase 5 Deviations **and** Measurements.
+
+### §F-8 — `02-design/README.md` still carries the superseded D2 premise
+
+- **Where:** `docs/research/tart-vm-testing-harness/02-design/README.md`, "The
+  short version": *"Seven crates in scope; `trusty-mpm` is a documented gap in
+  pattern (a) only (`publish = false`)."*
+- **Why it matters:** the 2026-07-31 reversal amended DOC-1 and DOC-2 but not their
+  index. The index is the **first** thing a zero-context engineer reads, and it
+  states as fact the exact premise DOC-1 D2 calls *"wrong"* in both halves.
+- **Decision rule:** fix it — **P8-T5**. It is listed here as well so it survives
+  a deferred Phase 8. It is a documentation defect with a known correct value, not
+  a judgment call.
+- **Record:** MANIFEST Phase 8 Files delivered.
+
+### §F-9 — Nothing specifies what *initiates* guest shutdown
+
+- **Where:** DOC-2 §Shell discipline's cleanup rule step 5 says *"`vm_wait_for_stopped`
+  then `vm_delete`, in that order, always. Never a bare `tart stop`."* §12.2's
+  `vm_wait_for_stopped` **polls** `tart list` for state `stopped`. DOC-1 §4.3's
+  sequence shows `wait_for_stopped()` then `tart delete`. **No function in the
+  contract issues a shutdown**, and a poll for `stopped` on a guest nobody asked to
+  stop will simply run out its 120 s budget and exit 70.
+- **Decision rule (narrowest reading of "bare"):** DOC-1 §8.1's rule is *"never
+  issue a bare `tart stop` **and treat its return as completion**"*, and its
+  generalisation is *"a tart exit code is not a completion signal"* — the
+  prohibition is on **trusting the exit code**, not on issuing the command.
+  Therefore: issue the stop **inside `vm_wait_for_stopped`** (it is in `lib/vm.sh`,
+  the only file permitted to contain `tart`), **discard its exit code entirely**,
+  and then poll `tart list` for the observable `stopped` state at 1 s intervals up
+  to 120 s. That sequence is what the measured write-loss evidence actually
+  forbids working around — the loss occurred when the return was trusted, and
+  polling is exactly the mitigation K1d measured as negligible in cost.
+- **If a guest-side clean shutdown (e.g. `shutdown -h now` over `tart exec`)
+  proves more reliable in practice, that is a legitimate refinement** — but it must
+  be recorded with the observation that motivated it, not adopted on intuition.
+- **Record:** MANIFEST Phase 2 Deviations, with the observed teardown behaviour
+  from the first real run pasted in.
+
+### §F-10 — Smaller gaps, resolved by narrowest reading; recorded for completeness
+
+| # | Gap | DOC-2 § | Decision rule |
+|---|---|---|---|
+| a | N2's example hardcodes `/Users/admin/.cargo/bin` while §8.2 makes `guest_home` a tunable | §6.2 vs §8.2 | Compose the probe's PATH from `guest_home`, not the literal. The literal is illustrative; the tunable is normative. |
+| b | Install **order** across the seven crates is unstated | §12.5 | Use TSV row order. Under a shared `CARGO_TARGET_DIR` order is performance-neutral, but `tctl` must exist before N2, and `trusty-installer` precedes N2 in row order already. |
+| c | `provision.sh` "may" write `~/.zshenv` — optional, no rule for choosing | §11.4 | Write it. It is measured at 617 ms, it makes a `--keep` VM inspectable, and P8-T1's drill proves nothing depends on it. |
+| d | `vm_boot` writes `tart-run.pid`; nothing says who reaps it | §12.2 | Cleanup does not kill it. The VM stopping is what ends `tart run`; killing the host process is the write-loss hazard by another route. Reap after `vm_wait_for_stopped` returns. |
+| e | Which daemons `stack doctor` will list under a fresh install is not stated | §1.1 | Assert only over `tsv_scope_packages`' seven values. A member `stack doctor` reports that the TSV does not know about is **logged, not asserted** — it is a `--check-table` finding, not a run failure. |
+| f | Pattern (b) branch selection has no flag | §8.2 | `VMTEST_DEFAULT_BRANCH`, via the mechanical override mapping. No new flag (P6-T3). |
+
+---
+
+## G. Traceability — plan phase to contract
+
+Every phase, and the DOC-1/DOC-2 sections it implements. This is the inverse of
+DOC-2's own traceability table: that one maps contracts to the design; this one
+maps work to contracts.
+
+| Phase | DOC-1 § | DOC-2 § | Retires / proves |
+|---|---|---|---|
+| **P1** | D4, §4.3, §5.1, §6.1, §8.4, §8.5, §14 | §3, §6.2 (N1), §7.3, §10.1, §11.2 | The unmeasured tar transport; the placeholder digest |
+| **P2** | §3.1, §3.2, §4.1, §8.1, §8.2, §8.3 | §2, §3, §4, §5, §8, §10, §12.2, §12.4, Shell discipline, JSON dependency | Host-side contracts; the `tart`-boundary invariant |
+| **P3** | §3.3, §4.2, §5.2, §5.3, §6.1, §8.6 | §6.2, §6.3, §7, §11, §12.1, §12.2 | Guest bring-up; the toolchain hand-off |
+| **P4** | §7.2, §7.4, D3 | §9 (all), §12.5 | Expectation-table drift |
+| **P5** | §6.5, §7.1, §7.3, §7.4, §7.5, §8.4, §9 | §1 (all), §6.2 (N2), §10.2, §12.2, §12.5 | The oracle; **RC-2**; the first full-stack timing |
+| **P6** | §6.2, §10 step 2, §12.1 | §10.2, §12.2, §12.5 | That the scenario abstraction holds |
+| **P7** | D1, D2, D3, §6.3, §7.5, §10 step 3 | §1.2, §9.2, §9.5, §12.2 | The **D2/D3 reversal**, end-to-end |
+| **P8** | §5.3, §9, §11, §12, §13, §14 | §3.4, §10.2, §11.4, open items | Isolation discipline; doc drift |
+
+---
+
+## H. References
+
+- [DOC-1 — Tart VM Install Testing Harness](../02-design/01-vm-install-harness.md) — settles what and why; **the authority on every decision this plan sequences**.
+- [DOC-2 — Harness Contracts & Interfaces](../02-design/02-harness-contracts.md) — settles every interface; **every task above cites a section of it**.
+- [MANIFEST.md](./MANIFEST.md) — the durable progress record. Updated by the final numbered task of every phase.
+- [`../02-design/README.md`](../02-design/README.md) — design index. **Carries a superseded claim; see §F-8 and P8-T5.**
+- [`../01-research/vm-install-probe-findings.md`](../01-research/vm-install-probe-findings.md) — raw measurements A–K; every number cited above traces here.
+- [`../01-research/devils-advocate-review.md`](../01-research/devils-advocate-review.md) — critique #9 (`:20`) is the tar-transport gap Phase 1 exists to close.
+
+> The `01-research/` directory lands in **PR #4456**; relative links to it resolve
+> once that branch is on `main`.
+
