@@ -903,9 +903,17 @@ and its differ before anything asserts against it.
   ```sh
   awk -F'\t' 'NR>1 && $1 !~ /^#/ && NF!=9 {print NR": "NF}' vmtest-harness/expected-binaries.tsv
   ```
-  prints nothing (every row has nine fields); `awk -F'\t' '$6=="yes"' | wc -l`
-  returns **13**; `grep -c 'trusty-memory' ` shows the **three** `trusty-memory`
-  binary rows including `trusty-memory-mcp-bridge`.
+  prints nothing (every row has nine fields). Then, **stated as derivations, with
+  today's value as the expected literal** — the literals have already moved twice
+  (D2's reversal, then D3's `trusty-review` addition), so assert the derivation and
+  read the number as a checksum, not as the contract:
+  - `awk -F'\t' '$6=="yes"' | wc -l` equals **the number of in-scope binaries**,
+    i.e. one row per `[[bin]]` of a D3 package (**13** today).
+  - `awk -F'\t' '$6=="yes" {print $2}' | sort -u | wc -l` equals **the number of
+    D3 crates** (**8** today) — this is the same number P4-T4's helper must emit.
+  - `grep -c 'trusty-memory'` shows the **three** `trusty-memory` binary rows
+    including `trusty-memory-mcp-bridge` — three because the manifest declares three
+    `[[bin]]` targets, not because three is a magic number.
 - **Depends:** P2-T8
 
 ### P4-T2 — `--check-table` self-diff
@@ -967,11 +975,33 @@ and its differ before anything asserts against it.
 - **Do:** implement `tsv_scope_crate_dirs` (unique `crate_dir`, in first-appearance
   order), `tsv_scope_packages` (unique `package`), and `tsv_expect <package>
   <binary> <pattern>`. Apply §F-3's decision rule.
-- **Acceptance:** `tsv_scope_crate_dirs` emits **8** lines, containing
-  `trusty-git-analytics` (**not** `tga` — that is the package name, and `--path`
-  takes the directory); `tsv_scope_packages` emits **8** lines including `tga`,
-  `trusty-mpm` and `trusty-review`; `tsv_expect trusty-mpm tm a` returns
-  `present`.
+- **Acceptance — order-free, and derived.** Every count below is stated as a
+  derivation with today's value as the expected literal:
+  - `tsv_scope_crate_dirs | wc -l` equals the number of **distinct `crate_dir`
+    values among `in_scope=yes` rows** (**8** today), and equals the number of D3
+    crates.
+  - `tsv_scope_crate_dirs | sort | uniq -d` is **empty** — no directory emitted
+    twice. This is the property §F-3 actually needs; the count alone does not
+    establish it.
+  - `tsv_scope_crate_dirs` **contains `trusty-git-analytics` and does NOT contain
+    `tga`** — `tga` is the package name and `--path` takes the directory, which is
+    exactly the discontinuity DOC-1 D3 warns about.
+  - `tsv_scope_packages | wc -l` equals the number of **distinct `package` values
+    among `in_scope=yes` rows** (**8** today), includes `tga`, `trusty-mpm` and
+    `trusty-review`, and likewise emits no duplicates.
+  - `tsv_expect trusty-mpm tm a` returns `present`.
+  - **Dropped, 2026-07-31: the "beginning `trusty-search`" assertion.** This
+    acceptance previously required `tsv_scope_crate_dirs` to *begin* with
+    `trusty-search`. That is a **file-layout assertion masquerading as a
+    behavioural one**, and it had to go: DOC-2 §9.1 mandates **no sort order** for
+    the TSV, and §9.6's `--check-table` algorithm is **set-based** (ADDED / REMOVED
+    / CHANGED over key sets). Re-sorting the file — which nothing forbids and
+    §9.6 would not even notice — would turn a green test red while nothing real
+    had changed. First-appearance order remains the helper's specified *behaviour*
+    (§F-3, and §F-10(b) relies on row order for install sequencing); it is simply
+    no longer *asserted against a specific file's current layout*. The checks above
+    are order-free and test the properties that matter: right set, no duplicates,
+    right count, directory-not-package.
 - **Depends:** P4-T1
 
 ### P4-T5 — Update the MANIFEST
@@ -1002,10 +1032,15 @@ measurement.
 **Checkpoint — PASS CONDITION.**
 
 > `vmtest run local` **exits 0**, and the run log shows:
-> (i) all **eight** crates installed via `cargo install --path`, each preceded by a
+> Counts below are **derived**, with today's value as the expected literal; if the
+> TSV has changed, the derivation is the condition and the literal follows it.
+> (i) one `cargo install --path` per value of `tsv_scope_crate_dirs`
+> (**8** today), and no directory installed twice, each preceded by a
 > `rustc --version` line emitted from inside that crate's directory;
-> (ii) `verify_binaries` reporting **13/13 in-scope binaries present**;
-> (iii) `tctl stack doctor --json` parsed, with every one of the eight packages —
+> (ii) `verify_binaries` reporting **N/N in-scope binaries present**, where N is the
+> count of `in_scope=yes` rows (**13** today);
+> (iii) `tctl stack doctor --json` parsed, with every one of `tsv_scope_packages`'
+> values (**8** today) —
 > **including `trusty-mpm`** — satisfying `health ∈ {healthy, stale}`,
 > `on_path == true`, `version != null`;
 > (iv) `verify_single_install` passing for `trusty-search` (2 binaries),
@@ -1053,9 +1088,10 @@ measurement.
   - **Never `cp` a binary into a `PATH` directory** (DOC-1 §7.3): copying a Mach-O
     binary is not equivalent to installing it, and cdhash-dependent behaviour (TCC
     attribution, keychain ACLs, notarisation) does not survive an arbitrary copy.
-- **Acceptance:** the run log contains eight `rustc --version` lines, each
-  immediately preceding its `cargo install --path`, and the one emitted from
-  `crates/trusty-git-analytics` reports a **different** version from the other seven
+- **Acceptance:** the run log contains one `rustc --version` line per value of
+  `tsv_scope_crate_dirs` (**8** today), each immediately preceding its `cargo
+  install --path`, and the one emitted from `crates/trusty-git-analytics` reports a
+  **different** version from all the others
   — reproducing K5. If it does not, that is a finding to record, not to smooth over.
 - **Depends:** P4-T5
 
@@ -1151,8 +1187,10 @@ DOC-2 §6.2 deliberately leaves N2's predicate weak because the code at
     carries the fourth call itself.** The rule the amendment states is the one to
     implement — *every multi-binary in-scope package gets a call*, and there are
     four of them.
-- **Acceptance:** `verify_binaries` logs `13/13 present`; four
-  `verify_single_install` calls pass; deliberately renaming
+- **Acceptance:** `verify_binaries` logs `N/N present` where N is the count of
+  `in_scope=yes` rows (**13** today); one `verify_single_install` call passes per
+  **multi-binary** in-scope package (**4** today — `trusty-search`,
+  `trusty-memory`, `trusty-installer`, `trusty-mpm`); deliberately renaming
   `~/.cargo/bin/trusty-memory-mcp-bridge` in the guest makes the run exit **60**
   with the sidecar named in the message.
 - **Depends:** P5-T3, P4-T4
@@ -1303,8 +1341,10 @@ explicitly, in code and in the MANIFEST.
 
 **Checkpoint — PASS CONDITION.**
 
-> `vmtest run branch` **exits 0** with the same thirteen-binary and
-> eight-package `stack doctor` assertions as Phase 5, and the run log shows a
+> `vmtest run branch` **exits 0** with the **same derived binary and package
+> assertions as Phase 5** — N/N where N is the count of `in_scope=yes` rows
+> (**13** today), over `tsv_scope_packages`' values (**8** today) — and the run log
+> shows a
 > guest-side `git clone` (no host→guest byte stream) and the checked-out branch
 > name.
 
@@ -1388,13 +1428,13 @@ and asserts `tm` **present**. A run that does not find `tm` is a **failure**.
 
 **Checkpoint — PASS CONDITION.**
 
-> `vmtest run released` **exits 0**, and the run log shows eight
-> `cargo install ... --locked` invocations — including **`cargo install tga
-> --locked`**, **`cargo install trusty-mpm --locked`** and **`cargo install
-> trusty-review --locked`** — followed by `verify_binaries` reporting
-> **13/13 present**, with `tm` and `trusty-mpm`
-> explicitly among them, and `tctl stack doctor --json` reporting `trusty-mpm` as
-> installed.
+> `vmtest run released` **exits 0**, and the run log shows one
+> `cargo install <pkg> --locked` invocation per value of `tsv_scope_packages`
+> (**8** today) — including **`cargo install tga --locked`**, **`cargo install
+> trusty-mpm --locked`** and **`cargo install trusty-review --locked`** — followed
+> by `verify_binaries` reporting **N/N present**, where N is the count of
+> `in_scope=yes` rows (**13** today), with `tm` and `trusty-mpm` explicitly among
+> them, and `tctl stack doctor --json` reporting `trusty-mpm` as installed.
 
 ### P7-T1 — `install_from_registry`
 
@@ -1414,9 +1454,12 @@ and asserts `tm` **present**. A run that does not find `tm` is a **failure**.
   - **Pattern (a) means crates.io and nothing else** (DOC-1 D1). `install.sh` and
     prebuilt release tarballs are out of scope; the crates.io path is the only one
     grounded in measurement (`cargo install tga --locked`, 131 s, 211 deps, 4 vCPU).
-- **Acceptance:** the run log shows eight `cargo install <pkg> --locked` lines
-  whose package names are exactly `tsv_scope_packages`' eight values, `tga` among
-  them.
+- **Acceptance:** the run log shows one `cargo install <pkg> --locked` line per
+  value of `tsv_scope_packages` (**8** today), and the set of package names is
+  **exactly** `tsv_scope_packages` — no more, no fewer, none repeated — with `tga`
+  among them. Assert against the helper's output, not against a literal list: the
+  scope has changed twice already (§A.1, §A.1b), and a hardcoded list is the thing
+  that silently fails to change with it.
 - **Depends:** P6-T5
 
 ### P7-T2 — `scenarios/install-released.sh`

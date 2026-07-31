@@ -213,14 +213,19 @@ not been completed is not complete, regardless of what its code does.
 
 - **State:** `not-started`
 - **Pass condition:** `vmtest run local` **exits 0**, and the run log shows:
-  (i) all **eight** crates installed via `cargo install --path`, each preceded by a
-  `rustc --version` line emitted from inside that crate's directory;
-  (ii) `verify_binaries` reporting **13/13 in-scope binaries present**;
-  (iii) `tctl stack doctor --json` parsed, with every one of the eight packages —
-  **including `trusty-mpm`** — satisfying `health ∈ {healthy, stale}`,
-  `on_path == true`, `version != null`;
-  (iv) `verify_single_install` passing for `trusty-search` (2 binaries),
-  `trusty-memory` (**3**), `trusty-installer` (2), and `trusty-mpm` (2);
+  Counts below are **derived**, with today's value as the expected literal; if the
+  TSV has changed, the derivation is the condition and the literal follows it.
+  (i) one `cargo install --path` per value of `tsv_scope_crate_dirs` (**8** today),
+  and no directory installed twice, each preceded by a `rustc --version` line
+  emitted from inside that crate's directory;
+  (ii) `verify_binaries` reporting **N/N in-scope binaries present**, where N is the
+  count of `in_scope=yes` rows (**13** today);
+  (iii) `tctl stack doctor --json` parsed, with every one of `tsv_scope_packages`'
+  values (**8** today) — **including `trusty-mpm`** — satisfying
+  `health ∈ {healthy, stale}`, `on_path == true`, `version != null`;
+  (iv) one `verify_single_install` passing per multi-binary in-scope package
+  (**4** today): `trusty-search` (2 binaries), `trusty-memory` (**3**),
+  `trusty-installer` (2), and `trusty-mpm` (2);
   (v) N2 recorded with its observed exit code and stderr;
   (vi) a total wall clock, logged, which is recorded here as the **first full-stack
   measurement**.
@@ -240,8 +245,10 @@ not been completed is not complete, regardless of what its code does.
 ## Phase 6 — Pattern (b): branch
 
 - **State:** `not-started`
-- **Pass condition:** `vmtest run branch` **exits 0** with the same thirteen-binary
-  and eight-package `stack doctor` assertions as Phase 5, and the run log shows a
+- **Pass condition:** `vmtest run branch` **exits 0** with the **same derived binary
+  and package assertions as Phase 5** — N/N where N is the count of `in_scope=yes`
+  rows (**13** today), over `tsv_scope_packages`' values (**8** today) — and the run
+  log shows a
   guest-side `git clone` (no host→guest byte stream) and the checked-out branch
   name.
 - **Observed result:** — not run
@@ -257,13 +264,13 @@ not been completed is not complete, regardless of what its code does.
 ## Phase 7 — Pattern (a): released
 
 - **State:** `not-started`
-- **Pass condition:** `vmtest run released` **exits 0**, and the run log shows eight
-  `cargo install ... --locked` invocations — including **`cargo install tga
-  --locked`**, **`cargo install trusty-mpm --locked`** and **`cargo install
-  trusty-review --locked`** — followed by `verify_binaries` reporting
-  **13/13 present**, with `tm` and `trusty-mpm`
-  explicitly among them, and `tctl stack doctor --json` reporting `trusty-mpm` as
-  installed.
+- **Pass condition:** `vmtest run released` **exits 0**, and the run log shows one
+  `cargo install <pkg> --locked` invocation per value of `tsv_scope_packages`
+  (**8** today) — including **`cargo install tga --locked`**, **`cargo install
+  trusty-mpm --locked`** and **`cargo install trusty-review --locked`** — followed
+  by `verify_binaries` reporting **N/N present**, where N is the count of
+  `in_scope=yes` rows (**13** today), with `tm` and `trusty-mpm` explicitly among
+  them, and `tctl stack doctor --json` reporting `trusty-mpm` as installed.
 - **Observed result:** — not run
 - **Files delivered:** — none
 - **Measurements:** — none *(expected: total wall clock; the published versions
