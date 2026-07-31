@@ -1754,8 +1754,11 @@ stale copy of DOC-2 needs to be able to tell which is which.
 - **Resolution — DOC-2 §12.2 gains `vm_request_stop <vm_name>`.** It lives in
   `lib/vm.sh` (the only file permitted to contain `tart`), flushes the guest with
   `sync; sync` over `tart exec` — non-fatal on failure — then issues `tart stop`
-  and **discards its exit code entirely**, always returning 0. That is the
-  research's own procedure (`../01-research/vm-install-probe-findings.md:820-831`).
+  and **discards its exit code entirely**, always returning 0. That is **steps 1
+  and 3** of the research's four-step procedure
+  (`../01-research/vm-install-probe-findings.md:820-831`); the `echo FLUSHED`
+  confirmation, the 10 s settle, and the clone→boot→assert verification are
+  deliberately dropped, and DOC-2 §12.2 records why each is safe to drop here.
   The cleanup ordering is now **`vm_request_stop` → `vm_wait_for_stopped` →
   `vm_delete`**, all three skipped under `--keep`. DOC-1 §8.1 is not violated: it
   forbids issuing a bare `tart stop` *and treating its return as completion*, and

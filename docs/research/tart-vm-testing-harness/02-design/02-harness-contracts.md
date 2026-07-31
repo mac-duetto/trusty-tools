@@ -1472,9 +1472,17 @@ vm_exec_raw "$vm" '/bin/sync; /bin/sync'     # failure is logged to stderr, not 
 tart stop "$vm" >/dev/null 2>&1 || :
 ```
 
-Both steps are the research's own stated procedure
-(`../01-research/vm-install-probe-findings.md:820-831`): `sync` in the guest, then
-`tart stop`, then verify by observation rather than by exit code. Step 1 is
+**Provenance: this implements two of the research procedure's four steps.**
+*(Amended 2026-07-31 — the earlier wording claimed the procedure entire.)* The
+procedure at `../01-research/vm-install-probe-findings.md:820-831` has four steps:
+(1) flush from inside the guest **and confirm it returned** —
+`tart exec "$VM" /bin/sh -c 'sync; sync; echo FLUSHED'`; (2) `sleep 10` to settle;
+(3) `tart stop "$VM"`; (4) verify the artefact by clone→boot→assert, **not** by
+trusting the stop's exit code. `vm_request_stop` implements **steps 1 and 3 only**,
+and step 1 not verbatim: it drops the `echo FLUSHED` confirmation, because
+`vm_exec_raw`'s failure here is logged to stderr rather than treated as fatal. Steps
+2 and 4 are omitted deliberately; the durability paragraph below is why that is
+safe. Step 1 is
 non-fatal because cleanup runs on every exit path (§Shell discipline), including
 ones where the guest is already unreachable; refusing to stop a VM because its
 flush failed would leave a VM behind for a reason weaker than the stop itself.
@@ -1493,10 +1501,17 @@ protect a write — "the state flag is not a durability flag"
 (`vm-install-probe-findings.md:814-817`). That finding was about *baking*, where
 the disk image is the artefact being kept. This harness deletes the VM immediately
 afterwards (§Shell discipline, property 5) and keeps it only under `--keep`, which
-skips teardown entirely. The observable requirement here is only that the VM reach
-`stopped` before `tart delete`. The `sync` is retained anyway: it costs one
-`tart exec`, and running the measured procedure rather than a subset of it is
-cheaper than arguing about which half mattered.
+skips teardown entirely. No path both stops a VM and then relies on its disk, so
+guest-write durability is not at stake — which is also why **step 4** has no
+analogue here: there is no retained artefact to clone→boot→assert against. The
+observable requirement here is only that the VM reach `stopped` before
+`tart delete`. The `sync` is retained anyway: it costs one `tart exec` and it is
+what the research calls "the only measured protection" (`:818`). **Step 2**, the
+10 s settle, is dropped on the same measurement's authority — K1-iii's variant
+isolation found that "both a guest-side `sync` and a settle delay were individually
+sufficient in the trials run" (`:804`), so the retained half is a sufficient one,
+and the settle would cost
+10 s on every teardown to buy durability this path does not need.
 
 **If the graceful path fails there is no escalation.** §10.3's "no retry, ever"
 applies unchanged: `vm_request_stop` is issued once. If the VM has not reached
