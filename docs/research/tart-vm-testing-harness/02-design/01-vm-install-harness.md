@@ -46,18 +46,53 @@ for an untested surface would give the harness a claim it cannot support. If
 `install.sh` coverage is wanted later, it needs its own measurement pass first
 (see §13).
 
-#### D2 — `trusty-mpm` is a documented gap in pattern (a)
+#### D2 — `trusty-mpm` is published, and pattern (a) covers it
 
-`trusty-mpm` carries `publish = false` and is therefore not on crates.io. It
-**cannot** be covered by pattern (a) and the harness must not pretend otherwise.
-It is covered by patterns (b) and (c) only.
+**This decision was reversed on 2026-07-31. The original premise was false.**
+The superseded text asserted that `trusty-mpm` "carries `publish = false` and is
+therefore not on crates.io", and concluded that pattern (a) could not cover it.
+Both halves are wrong.
 
-The alternative — mixing a source build into the "released" scenario so that the
-crate count matches — was rejected. "Released" must mean exactly one thing:
-*what a user gets from crates.io today*. A scenario whose semantics vary per crate
-is a scenario whose failures are ambiguous. The gap is recorded in
-`expected-binaries.tsv` (§7.2) and asserted as a *known exclusion*, not silently
-skipped.
+**The corrected fact.** `crates/trusty-mpm/Cargo.toml` contains **no `publish`
+key at all**. Its `[package]` table (lines 1–13) declares `name`, `version`,
+`edition`, `rust-version`, `license`, `repository`, `description`, `readme`,
+`homepage`, `keywords`, `categories`, and `exclude` — and nothing else. Cargo's
+default in the absence of that key is `publish = true`. Every textual occurrence
+of "publish" in that manifest is a comment *about other crates*, and those
+comments say the opposite of the superseded premise: lines 108–111 and 290–291
+record that the Tauri GUI is deliberately kept in the separate, `publish = false`
+`trusty-mpm-gui` crate precisely so that `trusty-mpm` itself "publishes cleanly to
+crates.io". This mismatch was first written up in
+[DOC-2 §9.5](./02-harness-contracts.md), which flagged the premise but explicitly
+declined to change D2; this amendment closes that open item.
+
+**Verified empirically, 2026-07-31.** `cargo search trusty-mpm --limit 5` returns
+`trusty-mpm = "1.0.2"` — the crate exists on crates.io at version **1.0.2**. The
+registry is the authority here, not the manifest, and it agrees with the manifest.
+(The `crates.io` JSON API was refused for this client under its data-access policy,
+so `cargo search` against the registry index is the evidence of record.)
+
+**The consequence.** `trusty-mpm` **is** installable by `cargo install trusty-mpm
+--locked` and is therefore **coverable by pattern (a)**. The "documented gap" this
+decision used to record **does not exist and is dissolved.** Pattern (a) covers the
+full seven-crate stack (D3), and the harness makes the same claim for all three
+patterns.
+
+What survives the reversal is the *rule*, not the exception it was invented for:
+"released" still means exactly one thing — *what a user gets from crates.io today*
+— and a source build must still never be mixed into the released scenario to make a
+count match. That rule now costs nothing, because nothing needs excluding.
+
+> **Amendment, 2026-07-31 — D2 reversed.** The original D2 was a settled owner
+> decision reached on a premise nobody checked against the manifest: it asserted
+> `publish = false` for a crate that has no `publish` key. Everything downstream of
+> that premise — the pattern-(a) crate count in D3, the known-absent assertions in
+> §7.5, the `expect_a = absent` rows in
+> [DOC-2 §9.3](./02-harness-contracts.md) — inherited the error intact. It is
+> recorded as a reversal rather than a silent edit because a design whose decisions
+> quietly change is a design nobody can audit. The lesson is narrow and worth
+> keeping: a claim about publish status is checkable in one command, and this one
+> was never run until now.
 
 #### D3 — The stack is seven crates
 
@@ -67,11 +102,13 @@ skipped.
 | 2 | `trusty-memory` | `trusty-memory` | yes |
 | 3 | `trusty-analyze` | `trusty-analyze` | yes |
 | 4 | `trusty-code` | `trusty-code` | yes |
-| 5 | `trusty-mpm` | — (`publish = false`) | **no** — D2 |
+| 5 | `trusty-mpm` | `trusty-mpm` (v1.0.2, verified 2026-07-31) | yes — **amended**, D2 |
 | 6 | `trusty-git-analytics` | **`tga`** | yes |
 | 7 | `trusty-installer` | `trusty-installer` | yes |
 
-So pattern (a) covers **six** crates and patterns (b)/(c) cover **seven**.
+So **all three patterns cover all seven crates.** Row 5 previously read
+"— (`publish = false`)" / "**no** — D2"; that is corrected per the D2 reversal
+above.
 
 Note the package-name discontinuity on row 6: the workspace directory is
 `crates/trusty-git-analytics`, the published package name and the binary are both
@@ -426,7 +463,7 @@ never rely on `mise activate`.
 |---|---|---|
 | **(c) local** | `tar` of `git ls-files -co --exclude-standard`, piped via `tart exec -i` to guest-local disk | 7 crates; includes uncommitted work |
 | **(b) branch** | `git clone` inside the guest (repo is public), checkout branch, `cargo install --path` | 7 crates; committed+pushed state |
-| **(a) released** | `cargo install <crate> --locked` from crates.io | 6 crates — excludes `trusty-mpm` (D2) |
+| **(a) released** | `cargo install <crate> --locked` from crates.io | 7 crates; latest published state (D2 as amended) |
 
 #### 6.1 Pattern (c) — local source
 
@@ -466,7 +503,7 @@ per crate. No host→guest source transfer occurs; the host repository is not re
 
 #### 6.3 Pattern (a) — released
 
-`cargo install <crate> --locked` from crates.io, for the six publishable crates in
+`cargo install <crate> --locked` from crates.io, for all seven publishable crates in
 D3. `--locked` is mandatory — it is what makes the run reproducible against the
 published lockfile rather than against whatever the resolver feels like today.
 
@@ -581,15 +618,21 @@ user with a stack that cannot start its daemons.
 
 #### 7.5 Per-pattern expectations
 
-Because pattern (a) excludes `trusty-mpm` (D2), the oracle must be
-**pattern-aware**: `tm` and `trusty-mpm` are asserted **present** under (b) and (c),
-and asserted **known-absent** under (a). "Known-absent" is an explicit expectation,
-not a skipped assertion — a run that unexpectedly *finds* `tm` under pattern (a)
-means something outside the pattern installed it, which is itself a finding.
+**Amended 2026-07-31 (D2 reversal).** This section previously required `tm` and
+`trusty-mpm` to be asserted **known-absent** under pattern (a), because D2 held that
+`trusty-mpm` was unpublished. It is published (D2 as amended, v1.0.2), so that
+expectation **inverts**: `tm` and `trusty-mpm` are asserted **present** under (a),
+(b), and (c) alike, and `tctl stack doctor --json` must report `trusty-mpm` as
+installed under every pattern. A pattern-(a) run that does *not* find `tm` is now a
+failure, where before it was the expected result.
 
-Correspondingly, `tctl stack doctor --json` under pattern (a) will report
-`trusty-mpm` as not installed. That is the expected result for that pattern and
-must not fail the run.
+The oracle is **still pattern-aware by construction** — `expected-binaries.tsv`
+carries a per-pattern expectation column (DOC-2 §9.1) and the oracle reads it —
+but with the gap dissolved there is currently no in-scope binary whose expectation
+differs across patterns. That is a *fact about today's table*, not a licence to
+collapse the mechanism: the moment any crate legitimately diverges per pattern, the
+column is where that is recorded, and "known-absent" remains an explicit asserted
+expectation rather than a skipped assertion.
 
 ---
 
@@ -718,15 +761,20 @@ meaningful claim rather than a file-existence check.
 
 **Full-stack figure — read this before quoting it.** The 4–8 minute range is an
 **extrapolation**, and it was extrapolated for **six** crates. D3 puts **seven**
-crates in scope, so the real figure is somewhat higher. Two further caveats:
+crates in scope for **every** pattern — including (a), which the superseded D2
+wrongly scoped at six — so the real figure is somewhat higher than the range says,
+in all three patterns rather than just two. No revised number is offered here:
+inventing one would be extrapolating from an extrapolation. Two further caveats:
 
 - The extrapolation assumes the shared `CARGO_TARGET_DIR` amortisation of §8.6.
   Without it the number is not close.
 - The two per-crate measurements above (112s + 131s for two crates) are not
   obviously consistent with 4–8 minutes for six or seven, *except* under strong
   shared-dependency amortisation. Treat 4–8 min as a **low-confidence planning
-  estimate** until a full-stack run is actually timed. The first pattern-(c)
-  full-stack run should be recorded as the replacement measurement.
+  estimate** — and, since the 2026-07-31 D2 amendment widened its scope without
+  re-deriving it, **lower-confidence now than when it was written**. It stands only
+  until a full-stack run is actually timed. The first pattern-(c) full-stack run
+  should be recorded as the replacement measurement.
 
 The ONNX detail matters and is worth keeping explicit: `ort-sys` downloads its
 runtime **successfully inside the guest**. Network-dependent build scripts are not
@@ -745,9 +793,11 @@ Per D4:
    This delivers the entire skeleton plus the novel transport.
 2. **Pattern (b) — branch.** Adds `scenarios/install-branch.sh` and a guest-side
    `git clone` path in `lib/source.sh`. No new infrastructure.
-3. **Pattern (a) — released.** Adds `scenarios/install-released.sh` and
-   pattern-aware `trusty-mpm` known-absent handling in the oracle (§7.5). No new
-   infrastructure.
+3. **Pattern (a) — released.** Adds `scenarios/install-released.sh` only. No new
+   infrastructure. *(Amended 2026-07-31: this step previously also called for
+   pattern-aware `trusty-mpm` known-absent handling in the oracle. The D2 reversal
+   removes that work item — pattern (a) now expects the same seven crates present
+   as (b) and (c), per §7.5.)*
 
 > **Settled:** the architecture sketch annotates `scenarios/install-local.sh` with
 > "build first". This means *implement this scenario first*, consistent with D4
