@@ -923,8 +923,10 @@ first.
   (`GIT_CLONE_MS=50131`, `:942`), which is **pattern (b)'s** transport. This is
   devil's-advocate critique #9
   ([`../01-research/devils-advocate-review.md:20`](../01-research/devils-advocate-review.md)),
-  and it is **not blocking** only because D4 records a deliberate decision to treat
-  the first pattern-(c) implementation as the validating measurement. Until that run
+  and it is **not blocking** only by a **recorded product-owner decision of
+  2026-07-31** — not by any technical finding — namely D4's deliberate acceptance of
+  risk in treating the first pattern-(c) implementation as the validating
+  measurement. Until that run
   succeeds, the harness's headline transport is unproven. Earlier drafts of D4
   wrongly claimed it had been measured; that claim is withdrawn.
 

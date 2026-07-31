@@ -119,9 +119,15 @@ Two deliberate choices, both judgment calls with no measurement behind them:
   handles it.
 
 `doctor` exits 0 on `ok`, 2 on `degraded` (`doctor.rs:100-106`), 3 on unknown
-member, 1 on JSON write failure. Because `degraded` is an expected pattern-(a)
-outcome, **the harness must not treat `tctl stack doctor`'s own exit code as the
-assertion.** It reads the JSON on stdout and applies the predicate above. This is
+member, 1 on JSON write failure. **The harness must not treat `tctl stack
+doctor`'s own exit code as the assertion.** It reads the JSON on stdout and
+applies the predicate above. *(Amended 2026-07-31.)* This is a forward-looking
+guard, not a description of today: post-D2 reversal no in-scope member is expected
+absent under any pattern, so a passing run should currently exit 0. Both the
+per-member column mechanism and this exit-code caution are retained **deliberately,
+against future divergence** — the first `expect_P == absent` row, or any other
+member state that drives `verdict` to `degraded` without being a packaging
+regression, needs them already in place. This is
 the same principle as DOC-1 §8.1's "a tart exit code is not a completion signal",
 applied to a different tool.
 
@@ -643,12 +649,23 @@ directory but **excludes** `~/.cargo/bin` and the mise shims — reproducing "ca
 absent" *for the process under test* without needing an unprovisioned guest.
 
 ```sh
+# 1. Locate it, on the host, capturing the guest's stdout. PATH here is the
+#    INSTALLED environment — cargo's bin dir included — because that is where the
+#    scenario just put tctl.
+TCTL_PATH="$(tart exec vmtest-<runid> /bin/sh -c \
+  'PATH=/Users/admin/.cargo/bin:/bin:/usr/bin; export PATH; command -v tctl')"
+
+# 2. Re-invoke that captured absolute path under a PATH that excludes
+#    ~/.cargo/bin and the mise shims. Note the double quotes: $TCTL_PATH is
+#    expanded by the HOST shell before the string is handed to `tart exec`.
 tart exec vmtest-<runid> /bin/sh -c \
-  'PATH=/Users/admin/.cargo/bin:/bin:/usr/bin; export PATH; command -v tctl' # locate it
-# then, with a PATH that includes tctl's dir but not cargo's:
-tart exec vmtest-<runid> /bin/sh -c \
-  'PATH=/bin:/usr/bin:/usr/sbin:/opt/homebrew/bin; export PATH; <abs-path-to-tctl> install trusty-search'
+  "PATH=/bin:/usr/bin:/usr/sbin:/opt/homebrew/bin; export PATH; $TCTL_PATH install trusty-search"
 ```
+
+The capture is the load-bearing step: `tctl` is reached in step 2 by absolute path
+precisely *because* it is not on the PATH that step 2 constructs. An empty
+`TCTL_PATH` means step 1 failed to find the binary the scenario claims to have
+installed — that is a harness error to be raised as such, not an RC-2 observation.
 
 *Expected exit code and output shape:* **REQUIRED-CONTRACT RC-2, not yet
 pinned.** `install.rs:826` maps the `which::which("cargo")` failure through
@@ -1194,7 +1211,7 @@ into a long interval it happens to land, in exchange for saving a handful of
 |---|---|---|---|
 | `tart clone` | `vm_clone` | **60 s** | 0.31 s measured, APFS CoW (`vm-install-probe-findings.md:875`). ~190× — deliberately loose because §3.3's by-construction variant may pull an image on the first run, which is unmeasured. |
 | `provision.sh` | one `tart exec` | **300 s** | 30.079 s measured (`vm-install-probe-findings.md:857-858`, `PROVISION_MS=30079`). 10×, because the step is network-bound (rust toolchain download alone is 20.8 s, `:854`) and a slow link is not a defect. |
-| single-crate install | one `tart exec` per crate | **900 s** | 112 s for `trusty-search`, 409 crates, 8 vCPU (`vm-install-probe-findings.md:934`); 131 s for `cargo install tga --locked` at 4 vCPU (DOC-1 §9). ~8× the largest measured single-crate build. |
+| single-crate install | one `tart exec` per crate | **900 s** | 112 s for `trusty-search`, 409 dependency crates compiled, 8 vCPU (`vm-install-probe-findings.md:934-935`); 131 s for `cargo install tga --locked` at 4 vCPU (DOC-1 §9). ~8× the largest measured single-crate build. |
 | full-stack scenario | scenario wall clock | **2700 s** (45 min) | DOC-1 §9 extrapolates 4–8 min **and labels it low-confidence, for six crates when D3 scopes seven**. ~5.6× the upper bound. |
 | guest `git clone` (pattern b) | one `tart exec` | **300 s** | 50.131 s measured (`vm-install-probe-findings.md:942`, `GIT_CLONE_MS=50131`). ~6×. |
 
