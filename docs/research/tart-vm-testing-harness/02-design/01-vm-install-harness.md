@@ -81,13 +81,64 @@ Note the package-name discontinuity on row 6: the workspace directory is
 
 Pattern **(c) local-source first**, then (b) branch, then (a) released.
 
-*Rationale:* (c) is the pattern that is fully grounded in measurement — the 112s
-`trusty-search` source build at 8 vCPU/16 GB is a pattern-(c)-shaped measurement —
-**and** it is the only pattern that exercises the transport unique to this harness
-(host→guest source delivery over `tart exec -i`, §5, §6.1). Patterns (b) and (a)
-both delegate source acquisition to the network from inside the guest and reuse
-machinery (b) and (a) have in common with any ordinary `cargo install`. Build the
-risky, novel thing first.
+*Rationale:* (c) exercises the one transport unique to this harness — host→guest
+source delivery as a `tar` over `tart exec -i` (§5, §6.1) — and **that transport
+has never been measured end-to-end**. Patterns (b) and (a) both delegate source
+acquisition to the network from inside the guest, reusing machinery they have in
+common with any ordinary `cargo install`. Build the unverified thing first.
+
+**What the 112s build does and does not establish.** The 112s `trusty-search`
+source build at 8 vCPU/16 GB is a real measurement of *building this workspace from
+a source tree inside a guest*, and §9 quotes it as such. It is **not** a
+measurement of pattern (c)'s transport. Measurement K3 reached that source tree by
+`git clone` **inside the guest** — recorded as `GIT_CLONE_MS=50131` alongside the
+build at
+[`../01-research/vm-install-probe-findings.md:934-942`](../01-research/vm-install-probe-findings.md).
+A guest-side `git clone` is **pattern (b)'s** source delivery, not (c)'s. So the
+build cost generalises across (b) and (c) — both build from an on-disk guest tree —
+while the delivery step that distinguishes (c) remains untested.
+
+**The tar-over-`tart exec -i` pipeline is UNVERIFIED end-to-end.** What was
+measured is a *generic channel property*: 200,000 lines passed through `tart exec`
+untruncated
+([`../01-research/vm-install-probe-findings.md:179`](../01-research/vm-install-probe-findings.md)),
+with exit codes propagating exactly through `-i` (§5.1). That establishes the
+channel can carry volume. It does **not** establish the sequence pattern (c)
+actually needs: host `git ls-files -co --exclude-standard` → `tar` → `tart exec -i`
+→ guest-side unpack → build against the unpacked tree. No such run exists. This is
+**devil's-advocate critique #9** — *"tar transfer: SURVIVES host-side, UNTESTED
+guest-side"* — recorded at
+[`../01-research/devils-advocate-review.md:20`](../01-research/devils-advocate-review.md),
+which also lists "transfer of 81 MiB by any mechanism" among the unmeasured items
+(`:126-127`). The critique was **not addressed** in earlier drafts of this
+document, which claimed the transport had been measured. It had not.
+
+**Why the order still holds — corrected justification.** The (c) → (b) → (a) order
+is unchanged, but it follows from the opposite fact to the one previously given.
+(c) is built first **because its transport is the unverified one**, and building it
+is accepted as the measurement that verifies it. The alternative — write a
+standalone tar-transport probe, measure it, then build (c) — was considered and
+rejected: the probe would be most of `lib/source.sh` with none of its value, and it
+would be a second artifact to keep honest. Implementing (c) first exercises the
+transport against the real payload, on the real path, with the oracle already
+watching, and the first successful pattern-(c) run becomes the recorded
+measurement.
+
+> **Recorded product-owner decision, 2026-07-31.** *Building pattern (c) IS the
+> measurement.* The harness accepts an unverified transport as its first
+> implementation target rather than running a separate probe first. This is a
+> deliberate acceptance of risk, not an oversight: if the tar pipeline does not
+> work, it fails loudly during the first (c) implementation, at which point (b) —
+> whose transport *was* measured, at `GIT_CLONE_MS=50131` — is the fallback that
+> keeps the harness useful. The first successful pattern-(c) run must be recorded
+> as the replacement measurement, in the same way §9 asks for the full-stack
+> timing.
+
+The interfaces this implementation order needs — the `lib/source.sh` signatures,
+the streamed-byte-count logging that turns §6.1's payload estimate into a
+measurement, and the scenario composition that keeps (b) available as a fallback —
+are specified in [DOC-2 §12](./02-harness-contracts.md), with the transport gap
+carried in its open-items list.
 
 #### D5 — Local Tart VM only; dependency download is acceptable
 
@@ -790,6 +841,19 @@ first.
 - **`install.sh` end-to-end in a guest.** Never tested. This is now out of scope
   per D1, so it is **no longer blocking** — but it also means the harness makes no
   claim whatsoever about the `install.sh` user path.
+- **Pattern (c)'s tar-over-`tart exec -i` transport, end-to-end.** Never measured.
+  What was measured is a generic channel property — 200,000 lines untruncated
+  ([`../01-research/vm-install-probe-findings.md:179`](../01-research/vm-install-probe-findings.md))
+  — not the receive-tar → unpack → build sequence pattern (c) depends on. The 112s
+  build of measurement K3 reached its source tree by guest-side `git clone`
+  (`GIT_CLONE_MS=50131`, `:942`), which is **pattern (b)'s** transport. This is
+  devil's-advocate critique #9
+  ([`../01-research/devils-advocate-review.md:20`](../01-research/devils-advocate-review.md)),
+  and it is **not blocking** only because D4 records a deliberate decision to treat
+  the first pattern-(c) implementation as the validating measurement. Until that run
+  succeeds, the harness's headline transport is unproven. Earlier drafts of D4
+  wrongly claimed it had been measured; that claim is withdrawn.
+
 - **`--dir` mounts in either direction.** Never measured. The harness does not use
   them (§6.4), and any future proposal to use them must measure first.
 - **TCC behaviour under a responsible app other than iTerm2.** **All** TCC
