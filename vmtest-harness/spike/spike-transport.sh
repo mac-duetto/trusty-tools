@@ -32,7 +32,14 @@
 # OUTPUT DISCIPLINE: every diagnostic goes to stderr; the final three lines —
 # the phase checkpoint — go to stdout.
 #
-# Usage:  bash vmtest-harness/spike/spike-transport.sh
+# Usage:  bash vmtest-harness/spike/spike-transport.sh [--dirty-check]
+#
+#   --dirty-check   Additionally validate pattern (c)'s DEFINING property — that
+#                   the delivered file set includes UNCOMMITTED work — by dirtying
+#                   the worktree with three sentinel fixtures before streaming and
+#                   asserting in-guest which of them arrived. Off by default: the
+#                   default run must not mutate the host worktree at all. See
+#                   t6b_dirty_assert() for why all three fixtures are needed.
 #
 set -euo pipefail
 
@@ -78,6 +85,17 @@ PROVISION_TIMEOUT=300                # DOC-2 §10.2 provisioning watchdog
 INSTALL_TIMEOUT=900                  # DOC-2 §10.2 single-crate install watchdog
 MIN_STREAMED_BYTES=80000000          # Phase 1 checkpoint condition (i)
 
+# The clean-run baseline this spike measured on 2026-07-31 (tree 7df36745), which
+# --dirty-check's counts are reported against. MANIFEST.md Phase 1, Measurements 1a/1b.
+CLEAN_RUN_BYTES=96788480
+CLEAN_RUN_FILES=5337
+
+# --dirty-check fixtures. Repo-relative, all three under `spike/` so they cannot
+# collide with a real file and so P3-T4's deletion of the spike takes them with it.
+FIX_TRACKED='vmtest-harness/spike/dirty-check-fixture.txt'    # tracked, committed
+FIX_UNTRACKED='vmtest-harness/spike/dirty-check-untracked.txt' # untracked, NOT ignored
+FIX_IGNORED='vmtest-harness/spike/target/dirty-check-ignored.txt' # ignored via **/target/
+
 # ---------------------------------------------------------------------------
 # Mutable state. Every one of these is read by the cleanup trap, so every read
 # there uses ${VAR:-} (set -u and traps interact badly — DOC-2 §Shell discipline).
@@ -88,6 +106,14 @@ TMPD=''
 TART_RUN_PID=''
 CLEANUP_DONE=0
 TEARDOWN_FAILED=0
+
+DIRTY_CHECK=0
+FIXTURES_CREATED=0                   # set BEFORE the first mutation, never after
+FIXTURES_RESTORED=0
+FIXTURE_RESTORE_FAILED=0
+SENT_TRACKED=''
+SENT_UNTRACKED=''
+SENT_IGNORED=''
 
 M_READY_S=''
 M_PROVISION_S=''
@@ -228,6 +254,74 @@ vm_wait_for_stopped() {
 vm_delete() { tart delete "$1"; }
 
 # ---------------------------------------------------------------------------
+# --dirty-check fixtures. The HOST WORKTREE IS THE FIXTURE here, which is the one
+# thing in this script that mutates state outside the ephemeral VM. It is therefore
+# held to the same discipline as the VM: created only after asserting the paths are
+# clean, and restored on EVERY exit path by the same trap chain that tears the VM
+# down. `FIXTURES_CREATED` is set BEFORE the first write, so a failure between the
+# flag and the write still restores.
+# ---------------------------------------------------------------------------
+
+fixture_create() {
+    local tag="$1"
+    SENT_TRACKED="VMTEST_DIRTY_SENTINEL_TRACKED_${tag}"
+    SENT_UNTRACKED="VMTEST_DIRTY_SENTINEL_UNTRACKED_${tag}"
+    SENT_IGNORED="VMTEST_DIRTY_SENTINEL_IGNORED_${tag}"
+
+    [ -f "$HOST_REPO/$FIX_TRACKED" ] \
+        || die 10 "tracked fixture missing: $FIX_TRACKED (it must be COMMITTED for 'git ls-files -c' to list it)"
+
+    # A `git checkout --` restore is only safe if the path had nothing to lose.
+    local dirt
+    dirt=$(cd "$HOST_REPO" && git status --porcelain --ignored -- "$FIX_TRACKED" "$FIX_UNTRACKED" "$FIX_IGNORED")
+    [ -z "$dirt" ] || die 10 "fixture paths are not clean before the run; refusing to touch them:
+$dirt"
+
+    # Both halves of `-o --exclude-standard` must be non-vacuous, so assert the
+    # host's classification of the two synthetic paths before creating them.
+    if (cd "$HOST_REPO" && git check-ignore -q "$FIX_UNTRACKED"); then
+        die 10 "$FIX_UNTRACKED is gitignored — the '-o' half of the check would be vacuous"
+    fi
+    if ! (cd "$HOST_REPO" && git check-ignore -q "$FIX_IGNORED"); then
+        die 10 "$FIX_IGNORED is NOT gitignored — the '--exclude-standard' half of the check would be vacuous"
+    fi
+
+    FIXTURES_CREATED=1
+    printf '%s\n' "$SENT_TRACKED" >> "$HOST_REPO/$FIX_TRACKED"
+    printf '%s\n' "$SENT_UNTRACKED" > "$HOST_REPO/$FIX_UNTRACKED"
+    mkdir -p "$(dirname "$HOST_REPO/$FIX_IGNORED")"
+    printf '%s\n' "$SENT_IGNORED" > "$HOST_REPO/$FIX_IGNORED"
+
+    log "fixture 1 (tracked, MODIFIED)   $FIX_TRACKED  <- $SENT_TRACKED"
+    log "fixture 2 (untracked, streamed) $FIX_UNTRACKED  <- $SENT_UNTRACKED"
+    log "fixture 3 (ignored, EXCLUDED)   $FIX_IGNORED  <- $SENT_IGNORED"
+    log 'host git classification of the three fixtures (git status --porcelain --ignored):'
+    (cd "$HOST_REPO" && git status --porcelain --ignored -- "$FIX_TRACKED" "$FIX_UNTRACKED" "$FIX_IGNORED") \
+        | sed 's/^/    | /' >&2
+}
+
+fixture_restore() {
+    if [ "${FIXTURES_CREATED:-0}" -ne 1 ]; then return 0; fi
+    if [ "${FIXTURES_RESTORED:-0}" -eq 1 ]; then return 0; fi   # idempotent, like the VM teardown
+    FIXTURES_RESTORED=1
+
+    rm -f "$HOST_REPO/$FIX_UNTRACKED" "$HOST_REPO/$FIX_IGNORED" || :
+    rmdir "$(dirname "$HOST_REPO/$FIX_IGNORED")" 2>/dev/null || :
+    (cd "$HOST_REPO" && git checkout -- "$FIX_TRACKED") \
+        || { FIXTURE_RESTORE_FAILED=1; log "*** fixture restore FAILED: git checkout -- $FIX_TRACKED ***"; }
+
+    local dirt
+    dirt=$(cd "$HOST_REPO" && git status --porcelain) || dirt='<git status failed>'
+    if [ -n "$dirt" ]; then
+        FIXTURE_RESTORE_FAILED=1
+        log '*** worktree NOT clean after fixture restore — DO NOT COMMIT: ***'
+        printf '%s\n' "$dirt" | sed 's/^/    | /' >&2
+    else
+        log 'fixtures restored: git status --porcelain is empty'
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Teardown. DOC-2 §Shell discipline, cleanup properties 1-5. Property 4 (--keep)
 # does not apply: the spike has no --keep and always tears down.
 # ---------------------------------------------------------------------------
@@ -235,6 +329,11 @@ vm_delete() { tart delete "$1"; }
 spike_teardown() {
     if [ "${CLEANUP_DONE:-0}" -eq 1 ]; then return 0; fi   # property 2: idempotent
     CLEANUP_DONE=1
+
+    # Worktree first: a VM that refuses to stop must not also cost the host its
+    # worktree. Both are idempotent, so the explicit call after the assertions and
+    # this one cannot double-restore.
+    fixture_restore
 
     # property 3: tolerate a run that never got that far.
     if [ -z "${VM:-}" ] || ! vm_exists "${VM:-}"; then
@@ -481,7 +580,16 @@ t5_provision() {
 
 t6_stream_source() {
     log '--- P1-T6: THE SLICE — stream the worktree ---'
-    log "host repo (read-only): $HOST_REPO"
+    if [ "$DIRTY_CHECK" -eq 1 ]; then
+        log 'host repo: READ-ONLY except for the three --dirty-check fixtures below'
+    else
+        log "host repo (read-only): $HOST_REPO"
+    fi
+
+    if [ "$DIRTY_CHECK" -eq 1 ]; then
+        log '--- P1-T6b(setup): dirtying the worktree with three sentinel fixtures ---'
+        fixture_create "$(date -u '+%Y%m%dT%H%M%SZ')_$$"
+    fi
 
     M_FILES_HOST=$(cd "$HOST_REPO" && git ls-files -co --exclude-standard | wc -l | tr -d ' ')
     log "host file count (git ls-files -co --exclude-standard | wc -l): $M_FILES_HOST"
@@ -537,6 +645,90 @@ t6_stream_source() {
     fi
     log 'target/ absent in guest, by construction'
     log 'P1-T6 PASS'
+
+    if [ "$DIRTY_CHECK" -eq 1 ]; then
+        t6b_dirty_assert
+        fixture_restore          # earliest safe point; the trap still covers every other path
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# P1-T6b — pattern (c)'s DEFINING property, the one Phase 1's clean run could not
+# test. DOC-1 §6.1 justifies `git ls-files -co --exclude-standard` on two claims:
+#
+#   POSITIVE — it includes UNCOMMITTED work. This is the entire reason pattern (c)
+#   exists rather than the slower, already-measured pattern (b), which can only ever
+#   deliver what has been pushed. Two halves, and they fail differently:
+#     sentinel 1 — a TRACKED file whose WORKING-TREE content differs from HEAD's.
+#                  `-c` lists the path; `tar` must read the worktree, not the index
+#                  or HEAD. An implementation built on `git archive HEAD` passes
+#                  every count check and fails this one.
+#     sentinel 2 — an UNTRACKED, non-ignored file. This is the `-o` half, which
+#                  contributed exactly ZERO files to the 2026-07-31 clean run.
+#
+#   NEGATIVE — it excludes gitignored paths BY CONSTRUCTION. `--exclude-standard` is
+#   what makes `-o` safe: without it, `-o` would enumerate `target/` and the payload
+#   would balloon from ~92 MB to tens of GB.
+#     sentinel 3 — a GITIGNORED file that must NOT arrive. The existing `test -d
+#                  target` check is weaker: it passes vacuously on a host that has
+#                  never built. This one cannot, because the file is created here.
+#
+# All three assertions are on content, not just presence, so a truncated or
+# HEAD-sourced transfer cannot satisfy them.
+# ---------------------------------------------------------------------------
+
+t6b_dirty_assert() {
+    log '--- P1-T6b: dirty-worktree assertions (pattern (c) defining property) ---'
+    local g_tracked="$GUEST_SRC/$FIX_TRACKED"
+    local g_untracked="$GUEST_SRC/$FIX_UNTRACKED"
+    local g_ignored="$GUEST_SRC/$FIX_IGNORED"
+    local out
+
+    # --- sentinel 1: TRACKED + MODIFIED must be PRESENT, with worktree content ---
+    out=$(vm_exec_raw "$VM" "tail -1 $g_tracked") \
+        || die 50 "sentinel 1 FAIL: tracked fixture is ABSENT in the guest ($g_tracked)"
+    [ "$out" = "$SENT_TRACKED" ] \
+        || die 50 "sentinel 1 FAIL: guest copy's last line is '$out', expected '$SENT_TRACKED' — the stream carried HEAD content, not worktree content"
+    log "sentinel 1 PRESENT (tracked, modified): $out"
+
+    # Whole-file equality, not just the sentinel line. `cksum` is POSIX and both
+    # ends are macOS, so the two outputs are directly comparable.
+    local h_ck g_ck
+    h_ck=$(cksum < "$HOST_REPO/$FIX_TRACKED")
+    g_ck=$(vm_exec_raw "$VM" "cksum < $g_tracked")
+    [ "$h_ck" = "$g_ck" ] \
+        || die 50 "sentinel 1 FAIL: cksum host '$h_ck' != guest '$g_ck'"
+    log "sentinel 1 content matches host exactly (cksum $g_ck)"
+
+    # --- sentinel 2: UNTRACKED, non-ignored must be PRESENT ---
+    out=$(vm_exec_raw "$VM" "cat $g_untracked") \
+        || die 50 "sentinel 2 FAIL: untracked fixture is ABSENT in the guest ($g_untracked) — the '-o' half of the file set does not work"
+    [ "$out" = "$SENT_UNTRACKED" ] \
+        || die 50 "sentinel 2 FAIL: guest content is '$out', expected '$SENT_UNTRACKED'"
+    log "sentinel 2 PRESENT (untracked, not ignored): $out"
+
+    # --- sentinel 3: GITIGNORED must be ABSENT. Two independent checks ---
+    if vm_exec_raw "$VM" "[ -e $g_ignored ]" >/dev/null 2>&1; then
+        die 50 "sentinel 3 FAIL: the GITIGNORED fixture ARRIVED at $g_ignored — --exclude-standard is not excluding, and target/ would follow"
+    fi
+    log "sentinel 3 ABSENT (gitignored path not present): $g_ignored"
+
+    if vm_exec_raw "$VM" "[ -d $GUEST_SRC/vmtest-harness/spike/target ]" >/dev/null 2>&1; then
+        die 50 "sentinel 3 FAIL: the ignored directory vmtest-harness/spike/target/ arrived"
+    fi
+    log 'sentinel 3 ABSENT (its ignored parent directory not present either)'
+
+    # The strongest form of the negative: the string occurs nowhere in the tree.
+    local hits
+    hits=$(vm_exec_raw "$VM" "grep -rl '$SENT_IGNORED' $GUEST_SRC 2>/dev/null | head -5" || true)
+    [ -z "$hits" ] \
+        || die 50 "sentinel 3 FAIL: the ignored sentinel leaked into the delivered tree at: $hits"
+    log "sentinel 3 ABSENT (grep -rl over the whole delivered tree found 0 occurrences)"
+
+    log "dirty run vs clean run (2026-07-31, tree 7df36745):"
+    log "  streamed_bytes  $M_STREAMED_BYTES  (clean $CLEAN_RUN_BYTES, delta $(( M_STREAMED_BYTES - CLEAN_RUN_BYTES )))"
+    log "  streamed_files  $M_FILES_HOST  (clean $CLEAN_RUN_FILES, delta $(( M_FILES_HOST - CLEAN_RUN_FILES )))"
+    log 'P1-T6b PASS — pattern (c) delivers uncommitted work and still excludes ignored paths'
 }
 
 # ---------------------------------------------------------------------------
@@ -608,6 +800,9 @@ t8_teardown_and_assert() {
     if [ "${TEARDOWN_FAILED:-0}" -ne 0 ]; then
         die 70 'teardown reported a failure'
     fi
+    if [ "${FIXTURE_RESTORE_FAILED:-0}" -ne 0 ]; then
+        die 70 'the host worktree was not restored to a clean state — see the fixture restore log above'
+    fi
     log 'host clean: no vmtest-spike-* VM in tart list'
     log 'P1-T8 PASS'
 }
@@ -617,12 +812,22 @@ t8_teardown_and_assert() {
 # ---------------------------------------------------------------------------
 
 main() {
-    local run_t0
+    local run_t0 arg
+    for arg in "$@"; do
+        case "$arg" in
+            --dirty-check) DIRTY_CHECK=1 ;;
+            *) die 10 "unknown argument '$arg' (usage: $0 [--dirty-check])" ;;
+        esac
+    done
+
     run_t0=$(now_s)
     TMPD=$(mktemp -d "${TMPDIR:-/tmp}/vmtest-spike.XXXXXX")
 
     log "spike-transport.sh starting (pid $$)"
     log "host repo: $HOST_REPO"
+    if [ "$DIRTY_CHECK" -eq 1 ]; then
+        log 'MODE: --dirty-check (P1-T6b runs; the host worktree is dirtied and restored)'
+    fi
 
     t1_host_deps
     t3_verify_pin
@@ -647,6 +852,13 @@ main() {
     log "base_image_digest        $M_DIGEST"
     log "total_wall_clock_s       $total_s"
     log '=== end measurements ==='
+
+    # --dirty-check emits its line BEFORE the checkpoint, so that "the final three
+    # lines on stdout are the checkpoint" stays literally true in both modes.
+    if [ "$DIRTY_CHECK" -eq 1 ]; then
+        printf 'DIRTY_CHECK sentinel1=PRESENT sentinel2=PRESENT sentinel3=ABSENT bytes=%s files=%s (clean run %s/%s)\n' \
+            "$M_STREAMED_BYTES" "$M_FILES_HOST" "$CLEAN_RUN_BYTES" "$CLEAN_RUN_FILES"
+    fi
 
     # The phase checkpoint. These are the final three lines on stdout.
     printf 'STREAMED_BYTES %s FILES %s\n' "$M_STREAMED_BYTES" "$M_FILES_HOST"
