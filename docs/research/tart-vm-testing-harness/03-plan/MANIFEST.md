@@ -108,7 +108,7 @@ not been completed is not complete, regardless of what its code does.
 
 | Phase | State | Updated | Commit |
 |---|---|---|---|
-| **P1** — Transport spike (thin vertical slice) | `complete` | 2026-07-31 | `7df36745` |
+| **P1** — Transport spike (thin vertical slice) | `complete` | 2026-08-01 | `7df36745`, `c6b18e63` |
 | **P2** — Host-side skeleton | `not-started` | — | — |
 | **P3** — Guest bring-up | `not-started` | — | — |
 | **P4** — Expectation table and `--check-table` | `not-started` | — | — |
@@ -117,8 +117,14 @@ not been completed is not complete, regardless of what its code does.
 | **P7** — Pattern (a): released | `not-started` | — | — |
 | **P8** — Hardening, docs, measurement write-back | `not-started` | — | — |
 
-**Plan status:** Phase 1 complete, 2026-07-31. `vmtest-harness/` **exists**. Phase 2
-is the next phase to start.
+**Plan status:** Phase 1 complete, 2026-07-31; **closed out 2026-08-01** with a
+second observed result (the dirty-worktree validation) and two plan corrections.
+`vmtest-harness/` **exists**. Phase 2 is the next phase to start.
+
+> **A note on dates.** This file's schema mandates **UTC**. The 2026-08-01 entries
+> below were produced at `2026-08-01 00:08–00:12 UTC`, which is `2026-07-31
+> 20:08–20:12 EDT` on the same host that produced the 2026-07-31 entries about
+> twenty minutes earlier. The record does not skip a day; it crosses midnight UTC.
 
 **Open items carried into execution** (from DOC-1 §14 and DOC-2 open items):
 
@@ -147,13 +153,31 @@ is the next phase to start.
 - **NEW, opened by Phase 1 — DOC-1 §6.1's payload figure is a *content* figure,
   not a *wire* figure.** The two differ by tar framing and the doc set does not
   currently distinguish them. See Phase 1 Measurements; written back in P8-T4.
-- **NEW, opened by Phase 1 — P2-T4's acceptance grep cannot pass while
-  `spike/` exists.** See Phase 1 Deviations item 4. Phase 2 must resolve it.
-- **NEW, opened by Phase 1 — pattern (c)'s defining property is still untested.**
-  The Phase 1 run streamed a **clean** worktree, so `-o` contributed zero files and
-  *"it includes uncommitted work"* (DOC-1 §6.1) was never exercised. The transport
-  is verified; the thing that makes it pattern (c) rather than a slower pattern (b)
-  is not. Run it once against a dirty worktree — P3-T4 or P5.
+- **Opened by Phase 1 — P2-T4's acceptance grep cannot pass while `spike/`
+  exists.** ~~Phase 2 must resolve it.~~ **CLOSED 2026-08-01 by owner decision, at
+  the plan.** P2-T4's grep is scoped with `--exclude-dir=spike`; the DOC-1 §3.2
+  invariant is unchanged, only the search path. The exemption **expires at P3-T4**,
+  whose acceptance now requires the argument to be deleted in the same commit that
+  deletes the directory. See Phase 1 Deviations item 9.
+- **Opened by Phase 1 — pattern (c)'s defining property is untested.** ~~The
+  Phase 1 run streamed a **clean** worktree, so `-o` contributed zero files.~~
+  **CLOSED 2026-08-01 — run against a dirty worktree, and the property HOLDS.**
+  `spike-transport.sh --dirty-check` streamed a worktree carrying one modified
+  tracked file, one untracked non-ignored file and one gitignored file. Observed in
+  the guest: the tracked file's **working-tree** content arrived (whole-file `cksum`
+  equal to the host's, sentinel as its last line); the untracked file arrived with
+  its exact content; the gitignored file did **not** arrive, and its sentinel string
+  occurs **zero** times anywhere in the delivered tree. DOC-1 §6.1's *"it includes
+  uncommitted work"* is now observed rather than assumed, and DOC-1 D4's fallback
+  re-ordering to (b) → (c) → (a) stays untriggered on this ground too. Full output
+  in Phase 1 Observed result, run 2. **It was run one phase earlier than suggested**
+  (here, not P3-T4/P5) because a property that is the *reason* pattern (c) was
+  chosen should not be first tested by the code that depends on it.
+- **NEW, opened 2026-08-01 — `--dirty-check` is not yet part of any checkpoint.**
+  It is an opt-in mode of a script that **P3-T4 deletes**. The property it proves is
+  a property of `source_deliver_local`, so P3-T4 should port the three sentinel
+  assertions into a test of `lib/source.sh` rather than let them die with the spike.
+  Deleting the spike without porting them would return this item to `open`.
 
 ---
 
@@ -271,9 +295,149 @@ is the next phase to start.
   $ grep -Eq '^digest<TAB>sha256:[0-9a-f]{64}$' vmtest-harness/base-image.pin && echo PIN_REAL
   PIN_REAL
   ```
+- **Observed result — ADDITIONAL, run 2 of 2: the dirty-worktree validation.**
+  (run 2026-08-01 UTC, tree `c6b18e63`, same host.) **Added 2026-08-01; the run-1
+  result above is unchanged.** This is the run the previous session's open item
+  asked for. It closes the question of whether pattern (c) actually delivers
+  uncommitted work — the property the clean run could not test.
+
+  **What was asserted, and what was observed.** Three fixtures with distinct
+  sentinels, all three under `vmtest-harness/spike/` so they cannot collide with a
+  real path. The host's own classification of them, logged immediately before the
+  stream, so the test is provably non-vacuous at both ends:
+
+  ```
+  $ git status --porcelain --ignored -- <the three fixtures>
+   M vmtest-harness/spike/dirty-check-fixture.txt
+  ?? vmtest-harness/spike/dirty-check-untracked.txt
+  !! vmtest-harness/spike/target/
+  ```
+
+  | # | Fixture | Git state | Exercises | Expected | **Observed** |
+  |---|---|---|---|---|---|
+  | 1 | `spike/dirty-check-fixture.txt` (sentinel appended) | tracked, **modified** (` M`) | `-c` reading **working-tree** content, not `HEAD`'s | PRESENT | **PRESENT** |
+  | 2 | `spike/dirty-check-untracked.txt` | **untracked**, not ignored (`??`) | the `-o` half — which contributed **0** files to run 1 | PRESENT | **PRESENT** |
+  | 3 | `spike/target/dirty-check-ignored.txt` | **ignored** (`!!`, via `**/target/`) | the `--exclude-standard` half | **ABSENT** | **ABSENT** |
+
+  The in-guest assertions, verbatim from the run log (**stderr**):
+
+  ```
+  [00:10:38] --- P1-T6b: dirty-worktree assertions (pattern (c) defining property) ---
+  [00:10:38] sentinel 1 PRESENT (tracked, modified): VMTEST_DIRTY_SENTINEL_TRACKED_20260801T001032Z_85125
+  [00:10:39] sentinel 1 content matches host exactly (cksum 4176744393 641)
+  [00:10:39] sentinel 2 PRESENT (untracked, not ignored): VMTEST_DIRTY_SENTINEL_UNTRACKED_20260801T001032Z_85125
+  [00:10:39] sentinel 3 ABSENT (gitignored path not present): /Users/admin/vmtest-src/vmtest-harness/spike/target/dirty-check-ignored.txt
+  [00:10:39] sentinel 3 ABSENT (its ignored parent directory not present either)
+  [00:10:40] sentinel 3 ABSENT (grep -rl over the whole delivered tree found 0 occurrences)
+  [00:10:40] dirty run vs clean run (2026-07-31, tree 7df36745):
+  [00:10:40]   streamed_bytes  96819200  (clean 96788480, delta 30720)
+  [00:10:40]   streamed_files  5339  (clean 5337, delta 2)
+  [00:10:40] P1-T6b PASS — pattern (c) delivers uncommitted work and still excludes ignored paths
+  [00:10:40] fixtures restored: git status --porcelain is empty
+  ```
+
+  **stdout**, with the checkpoint still the final three lines:
+
+  ```
+  $ bash vmtest-harness/spike/spike-transport.sh --dirty-check > d.out 2> d.err; echo "EXIT=$?"
+  $ cat d.out
+  DIRTY_CHECK sentinel1=PRESENT sentinel2=PRESENT sentinel3=ABSENT bytes=96819200 files=5339 (clean run 96788480/5337)
+  STREAMED_BYTES 96819200 FILES 5339
+  trusty-search 0.40.0
+  TART_LIST vmtest-spike-* entries after teardown: 0
+  EXIT=0
+  ```
+
+  **Assertions 1 and 2 are on content, not presence.** Sentinel 1 is checked as
+  the guest copy's **last line** *and* by whole-file `cksum` equality against the
+  host (`4176744393 641`, identical both ends), so a transfer sourced from
+  `git archive HEAD` — which passes every file-count check in this phase — fails
+  here. Sentinel 2 is compared to its exact expected string. Sentinel 3's negative
+  is asserted **three independent ways**: the path is absent, its ignored parent
+  directory is absent, and `grep -rl` over the entire 92 MB delivered tree finds
+  **zero** occurrences of the string.
+
+  **Why sentinel 3 matters as much as 1 and 2.** `--exclude-standard` is what makes
+  `-o` safe. Without it `-o` enumerates `target/` and the payload goes from ~92 MB
+  to tens of GB. The pre-existing `test -d /Users/admin/vmtest-src/target` check is
+  weaker than it looks — it passes **vacuously** on a host that has never built.
+  Sentinel 3 cannot pass vacuously, because the file is created by the run.
+
+  **Counts, decomposed** (both differences are fully accounted for; nothing is
+  unexplained):
+
+  | | Run 1, clean (`7df36745`) | Run 2, dirty (`c6b18e63`) | Delta |
+  |---|---|---|---|
+  | streamed **files** | 5,337 | **5,339** | **+2** |
+  | streamed **bytes** (wire) | 96,788,480 | **96,819,200** | **+30,720** |
+
+  `+2` files = **+1 tracked** (`dirty-check-fixture.txt`, committed at `c6b18e63`
+  so that `-c` can list it) **+1 untracked** (the `??` fixture, which is the `-o`
+  half doing work for the first time). Verified independently after the run:
+  `git ls-files | wc -l` → **5338** and `git ls-files -o --exclude-standard | wc -l`
+  → **0** (the fixture having been restored), i.e. `5338 + 1 = 5339` during the run.
+  The ignored fixture contributes **0**, which is the point. `+30,720` B = two new
+  files at 512-byte tar granularity plus one appended sentinel line — 30 tar blocks,
+  consistent with the framing analysis in Measurement 1a below.
+
+  **Fixture hygiene — verified, not assumed.** Restore runs from the same trap
+  chain that tears the VM down, and runs **before** the VM teardown so a VM that
+  refuses to stop cannot also cost the host its worktree. Both the explicit call and
+  the trap call are idempotent. The run's own check and an independent one after it:
+
+  ```
+  [00:10:40] fixtures restored: git status --porcelain is empty
+
+  $ git status --porcelain          # separate shell, after the script exited
+                                    # (no output)
+  $ git ls-files | wc -l
+      5338
+  $ git ls-files -o --exclude-standard | wc -l
+         0
+  ```
+
+  A non-empty `git status --porcelain` after restore sets `FIXTURE_RESTORE_FAILED`
+  and the run **dies 70** at P1-T8. It is a failure condition, not a warning.
+
+  Independent host-cleanliness proof, raw `tart list`, unedited, from a separate
+  shell after the script exited:
+
+  ```
+  $ tart list
+  Source Name                                                                                                        Disk Size Accessed      State
+  local  tahoe-base                                                                                                  50   33   4 minutes ago stopped
+  OCI    ghcr.io/cirruslabs/macos-tahoe-base:latest                                                                  50   32   2 weeks ago   stopped
+  OCI    ghcr.io/cirruslabs/macos-tahoe-base@sha256:a8e1c8305758643f513fdccdd829c2243687c60791083dea42f73f0b7aeb435c 50   32   2 weeks ago   stopped
+  ```
+
+  No `vmtest-spike-*` entry survives. Same three pre-existing rows, same `Disk`/
+  `Size`/`State`; only `tahoe-base`'s `Accessed` moved, which is what an APFS CoW
+  clone does to its source.
+
+  **Divergence recorded — provisioning took 97 s, versus 40 s in run 1 and the
+  30.079 s measured baseline (3.2×).** The script logged its own
+  `NOTE: provisioning exceeded 3x the measured 30.079s baseline` and continued;
+  P1-T5's acceptance bound is 3×, so **this run sits just outside it**. It is
+  recorded rather than smoothed over. Every other number moved the *other* way or
+  not at all (boot 17 s vs 18 s; stream 3 s vs 4 s; build 103 s vs 105 s), and
+  provisioning is the one step that fetches over the network (`mise use -g
+  rust@1.91`, `mise use -g uv@latest`), so network variance is the obvious
+  candidate — but **two data points are not a distribution**, and this is exactly
+  the input P8-T2 needs when it grounds the timeouts. Nothing about it bears on the
+  transport, which is what this run tested.
+
+  Other run-2 measurements, for the record: `boot_to_ready_s 17`,
+  `stream_s 3`, `build_install_s 103`, `stop_to_stopped_s 1`,
+  `total_wall_clock_s 236`, same base-image digest.
 - **Files delivered:**
   - create `vmtest-harness/base-image.pin`
   - create `vmtest-harness/spike/spike-transport.sh`
+  - *(2026-08-01)* modify `vmtest-harness/spike/spike-transport.sh` — `--dirty-check`
+  - *(2026-08-01)* create `vmtest-harness/spike/dirty-check-fixture.txt` — the
+    **tracked** fixture; it must be committed for `git ls-files -c` to list it.
+    Deleted with the rest of `spike/` at P3-T4.
+  - *(2026-08-01)* modify `docs/research/tart-vm-testing-harness/03-plan/01-implementation-plan.md`
+    — the P1-T6, P2-T4 and P3-T4 corrections
   - modify `docs/research/tart-vm-testing-harness/03-plan/MANIFEST.md`
 - **Measurements:** all six the plan asks for (P1-T9), plus the digest. Each is
   the value the script logged, with the command that produced it.
@@ -333,6 +497,16 @@ is the next phase to start.
   rule — and because it is the same failure mode §F-3 catalogues: reasoning from a
   plausible mechanism instead of running the command.
 
+  > **Follow-up, 2026-08-01 — the untested property has now been tested, and it
+  > holds.** The paragraph above stands exactly as written about **run 1**: that run
+  > streamed a clean worktree and `-o` contributed zero files. What it asked for —
+  > *"deliberately run it against a dirty worktree at least once"* — was done the
+  > same night, one phase earlier than it suggested. See **Observed result, run 2**.
+  > `-o` contributed **1** file, `-c` was observed carrying **working-tree** content
+  > rather than `HEAD` content, and `--exclude-standard` was observed **excluding**.
+  > DOC-1 §6.1's "lower bound / close proxy" caveat is now grounded in a measurement
+  > instead of an argument, which is the whole of the §F-3 lesson.
+
   **Note on 5 — the interval is below the harness's own observational floor, and
   that is the finding.** `vm_wait_for_stopped`'s **first** poll — issued
   immediately after `vm_request_stop` returned, before any `sleep` — already
@@ -364,6 +538,12 @@ is the next phase to start.
   against a tree delivered by guest-side `git clone`. Same crate, same sizing, and
   the tar-delivered build was marginally *faster*. The transport is not a
   build-performance risk, only — until now — a correctness one.
+
+  **Added 2026-08-01 — run 2's numbers are in Observed result, run 2**, with the
+  `+2` files / `+30,720` bytes fully decomposed and the 97 s provisioning outlier
+  recorded. The table above is **run 1's** and is left as measured; a second run is
+  a second data point, not a replacement for the first. Both are inputs to P8-T2
+  and P8-T4.
 - **Deviations from plan:**
   1. **P1-T6 acceptance: the guest file count is asserted on `find … ! -type d`,
      not the plan's literal `find … -type f`.** This repo carries **4 tracked
@@ -374,6 +554,14 @@ is the next phase to start.
      logged every run (`5337` and `5333`); the equality assertion uses the
      comparable set. **The plan's check is wrong as written, not merely
      inconvenient** — P3-T4 should carry `! -type d` into `lib/source.sh`.
+
+     > **Resolved 2026-08-01 — the plan is now corrected at source, so this stops
+     > being a deviation.** P1-T6's acceptance block in
+     > [01-implementation-plan.md](./01-implementation-plan.md) now reads
+     > `find /Users/admin/vmtest-src ! -type d | wc -l`, with a dated correction
+     > stating **why** so that nobody reverts it as a typo, and P3-T4's acceptance
+     > now explicitly requires the corrected form to be ported into
+     > `lib/source.sh`. Run 2 logged `5339` / `5335`, the same 4-file symlink gap.
   2. **Byte counting uses `dd` as a pipeline element, not `tee >(wc -c)`.** The
      plan says only "count the bytes crossing the pipe". A process substitution's
      writer is not synchronised with the pipeline's return, so `tee >(wc -c >file)`
@@ -400,6 +588,17 @@ is the next phase to start.
      readings, for whoever owns Phase 2: exclude `spike/` from the grep with a
      comment naming P3-T4, **or** move the spike deletion forward to P2-T4. Do not
      weaken the invariant itself; it is DOC-1 §3.2.
+
+     > **Resolved 2026-08-01 by owner decision — the first of the two suggested
+     > readings.** P2-T4's grep is scoped with `--exclude-dir=spike`. The invariant
+     > is untouched: DOC-1 §3.2 still says exactly one file in the production tree
+     > may name the OS. What is scoped is the **search path**, not the rule.
+     > **The exemption expires at P3-T4**, and that is enforced from both ends —
+     > P2-T4's correction names P3-T4 as the expiry, and P3-T4's acceptance now
+     > requires the `--exclude-dir=spike` argument to be deleted **in the same
+     > commit** that deletes `vmtest-harness/spike/`, after which the scoped and
+     > unscoped greps are the same command. Verified on the tree as it stands:
+     > unscoped → `vmtest-harness/spike/spike-transport.sh`; scoped → empty.
   5. **§F-10(c) applied one phase early — the spike writes `~/.zshenv`.** DOC-2
      §11.4's rule (write it, never read it) is honoured with the reconciliation
      stated in a comment at the write site, as §11.4 requires. Nothing in the
@@ -418,6 +617,33 @@ is the next phase to start.
      pin **before** cloning is strictly safer: a drifted base image is refused
      before a VM exists rather than after. No task's actual dependency is violated.
 
+  9. **NEW, 2026-08-01 — two plan defects corrected at source, in the doc set's
+     dated-amendment style.** Both made a task fail on **correct** work, which is
+     why they are corrections to the plan rather than deviations from it.
+     - **P1-T6's acceptance command:** `find … -type f` → `find … ! -type d`. See
+       deviation 1 above for the mechanism (4 tracked symlinks) and the resolution
+       note for what changed. The correction states its reason inline so it is not
+       reverted as a typo, and P3-T4 now has to carry it forward.
+     - **P2-T4's acceptance grep:** scoped with `--exclude-dir=spike`, expiring at
+       P3-T4. See deviation 4 above. **Owner decision**, not an implementation
+       choice — the previous session correctly applied the stop rule and left it
+       open rather than inventing a contract.
+
+     Both are recorded here *and* in the plan, because this file is the durable
+     record of **why** the plan changed and the plan is the record of **what** it
+     now says.
+  10. **NEW, 2026-08-01 — `--dirty-check` is an opt-in mode, not a change to the
+     default run.** The spike's default behaviour is byte-for-byte what run 1
+     executed and still **never mutates the host worktree**; the dirty-worktree
+     validation is reached only via an explicit flag. This is deliberate. The
+     fixture mechanism is the one thing in the whole spike that writes outside the
+     ephemeral VM, so it is (a) off unless asked for, (b) held to the same trap
+     discipline as the VM, restoring **before** teardown so a VM that refuses to
+     stop cannot also cost the host its worktree, and (c) fatal on failure — a
+     non-empty `git status --porcelain` after restore exits **70**, it is not a
+     warning. The plan does not ask for this mode; it is additive, and it is what
+     closed the open item the previous run logged.
+
   **Not deviations, recorded so the next agent does not re-litigate them:** §F-9
   is resolved at source, so `vm_request_stop` was implemented as specified with no
   decision to make; the plan's own note that P1-T3 "reduces to recording and
@@ -425,6 +651,10 @@ is the next phase to start.
   transport verified`**, so no `blocked` state and no product-owner sign-off is
   pending, and DOC-1 D4's (b)-first fallback is **not** invoked.
 - **Tasks:** P1-T1 … P1-T11 complete. (P1-T10 recorded `N/A — transport verified`.)
+  **2026-08-01: no new task IDs.** The dirty-worktree validation is additional
+  evidence for **P1-T6**, whose *Do* clause already claimed the file set "**includes
+  uncommitted work**" — run 2 is the first run that tested that clause. Task IDs are
+  stable (plan §B); this is not P1-T12.
 
 ## Phase 2 — Host-side skeleton: driver, config, registry, `lib/vm.sh`, preflight, `clean`
 
