@@ -133,10 +133,12 @@ seed verbatim and `vmtest --check-table` diffs it against the workspace's actual
 required.** **P4-T3 found NO DRIFT** — §9.3's seed is exactly correct as of
 2026-08-02 (28 rows == 28 targets; 13 in scope; 8 crate directories; 8 packages).
 **Phase 4 found one contract defect, and it is in the PLAN rather than in DOC-2:**
-the checkpoint's pass condition asks for a `REMOVED` finding where §9.6's
-set algebra makes a deleted table row `ADDED`. The implementation follows §9.6;
-see Phase 4 Deviations item 1 for the recommended fix at source. Phase 5 is the
-next phase to begin, and it needs a VM.
+the checkpoint's pass condition asked for a `REMOVED` finding where §9.6's
+set algebra makes a deleted table row `ADDED`. The implementation follows §9.6.
+**RESOLVED AT SOURCE 2026-08-02** — the plan's Phase 4 checkpoint and P4-T5
+acceptance now read `ADDED` and carry a dated correction note on the set
+direction; DOC-2 §9.6 was not amended and no code changed. See Phase 4 Deviations
+item 1. Phase 5 is the next phase to begin, and it needs a VM.
 
 > **BOTH PHASE 3 CONTRACT DEFECTS ARE RESOLVED AT SOURCE, 2026-08-02**, by owner
 > decision, each on the reading Phase 3 identified as the narrower/stronger fix.
@@ -2055,8 +2057,12 @@ next phase to begin, and it needs a VM.
 - **Pass condition:** `vmtest --check-table` **exits 0** against the workspace as it
   stands, printing no ADDED/REMOVED/CHANGED findings. Then, with one row
   deliberately deleted from `expected-binaries.tsv`, it **exits 60** and prints
-  exactly one `REMOVED` finding naming that `(package, binary)` pair. The row is
+  exactly one `ADDED` finding naming that `(package, binary)` pair. The row is
   restored afterwards and the command exits 0 again.
+  *(Mirrors the plan's Phase 4 checkpoint as amended 2026-08-02. It read `REMOVED`
+  when this phase ran; that wording was the defect in Deviations item 1, now
+  resolved at source. The observed result below is unchanged — it always showed
+  `ADDED`.)*
 - **Observed result:** (run 2026-08-02 UTC, tree `12a87f28`, **no VM created — no
   VM is required by this phase**)
 
@@ -2205,7 +2211,20 @@ next phase to begin, and it needs a VM.
 - **Deviations from plan:**
 
   1. **THE CHECKPOINT'S PASS CONDITION NAMES THE WRONG FINDING CLASS. Contract
-     defect in the plan, not in DOC-2.** The pass condition requires that deleting
+     defect in the plan, not in DOC-2.**
+
+     > **RESOLVED AT SOURCE 2026-08-02**, exactly as recommended below. Pointers:
+     > plan **[01-implementation-plan.md](./01-implementation-plan.md)**, Phase 4
+     > checkpoint — now reads *"prints exactly one `ADDED` finding"* and carries a
+     > dated **Correction, 2026-08-02 (UTC)** note stating the set direction (table
+     > deletion → `ADDED`; workspace `[[bin]]` deletion → `REMOVED`) so it is not
+     > "corrected" back; plan **P4-T5** acceptance, corrected identically; this
+     > file's **Pass condition** above, mirrored. **DOC-2 §9.6 was NOT amended** —
+     > it was right all along and remains authoritative. No code changed: the
+     > implementation already followed §9.6 and is unmodified.
+     > **The text below is the original finding, unedited.**
+
+     The pass condition requires that deleting
      one row from `expected-binaries.tsv` print *"exactly one `REMOVED` finding"*.
      **DOC-2 §9.6 defines the opposite**, unambiguously:
      ```
