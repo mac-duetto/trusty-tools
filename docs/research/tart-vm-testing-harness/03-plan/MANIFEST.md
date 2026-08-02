@@ -163,8 +163,12 @@ phase since P1 that boots a guest.
   invariant is unchanged, only the search path. The exemption **expires at P3-T4**,
   whose acceptance now requires the argument to be deleted in the same commit that
   deletes the directory. See Phase 1 Deviations item 9.
-- **NEW, opened 2026-08-01 by Phase 2 — P2-T4's acceptance grep is a SUBSTRING
-  match, and DOC-2 §4.3 mandates a filename that contains the search string.**
+- ~~**Opened 2026-08-01 by Phase 2 — P2-T4's acceptance grep is a SUBSTRING
+  match, and DOC-2 §4.3 mandates a filename that contains the search string.**~~
+  **CLOSED 2026-08-02 by owner decision, at the plan**, on reading (a): P2-T4's
+  and P3-T4's checks are now `grep -rlnw`, each with a dated correction note
+  recording that `started` is why. The DOC-1 §3.2 invariant was never in
+  question. Original text retained below.
   `grep -rln 'tart'` matches the four characters wherever they occur, including
   inside the English word that §4.3 requires as one of the four run-registry
   filenames (`pid`, `vm`, `pattern`, and the one that records the run's begin
@@ -964,6 +968,16 @@ phase since P1 that boots a guest.
        twelve signatures cover the *lifecycle* of one VM completely and cover
        *enumeration* and *operator guidance* not at all. **§12.2 should gain
        these three**, and P8 is the place to write that back.
+
+       > **RESOLVED AT SOURCE, 2026-08-02.** §12.2 has gained all three, with
+       > the signatures as implemented, and its surface is now **fifteen**
+       > signatures rather than twelve. The amendment states per-function why
+       > each one *preserves* the DOC-1 §3.2 invariant rather than bending it.
+       > Plan P2-T4's *Contract* line and its *Do* list are corrected to match.
+       > Done here rather than deferred to P8, as this item proposed: a module
+       > surface that is wrong in the spec is silently re-derived by every
+       > phase that reads it, and Phase 3 reads it next.
+       > See [DOC-2 §12.2](../02-design/02-harness-contracts.md).
   4. **CONTRACT DEFECT — P2-T4's acceptance grep is a SUBSTRING match, and
      DOC-2 §4.3 mandates a registry filename containing the search string.**
      The driver appears in the literal grep's output. It appears on exactly one
@@ -999,6 +1013,18 @@ phase since P1 that boots a guest.
      literal in the driver, which would defeat a review rather than pass one.
      **P3-T4 inherits this**: it must delete `--exclude-dir=spike` and re-run
      the grep, and it will hit the same line unless the check is amended first.
+
+     > **RESOLVED AT SOURCE, 2026-08-02 — reading (a), by owner decision.**
+     > P2-T4's acceptance grep is now `grep -rlnw`, and **P3-T4's inherited
+     > check is corrected the same way**. Both tasks carry a dated correction
+     > note recording that `started` is why `-w` is there, so that a later
+     > reader does not "simplify" it away and re-break the check on correct
+     > work. The DOC-1 §3.2 invariant was never in question and is unchanged.
+     > The two P3-T4 corrections are **independent**: deleting
+     > `--exclude-dir=spike` removes the first reason the grep could not pass
+     > and does nothing about this one, so `-w` must survive that deletion —
+     > a reviewer of P3-T4 now checks for three things, not two.
+     > See [the plan](./01-implementation-plan.md), P2-T4 and P3-T4.
   5. **DOC-2 §12.3's config globals collide by name with §8.2's environment
      overrides, so the driver does not set them.** §12.3 lists `VMTEST_CPU`,
      `VMTEST_MEM_MIB`, `VMTEST_GUEST_HOME` and friends as globals holding the
@@ -1014,6 +1040,26 @@ phase since P1 that boots a guest.
      (`VMTEST_RUNID`, `VMTEST_VM`, `VMTEST_RUNDIR`, `VMTEST_PATTERN`,
      `VMTEST_KEEP`, `VMTEST_GUEST_ENV`, `VMTEST_EXIT`, `VMTEST_CLEANUP_DONE`).
      A one-word note in §12.3 would close this.
+
+     > **RESOLVED AT SOURCE, 2026-08-02.** §12.3 now strikes the six config
+     > names from the globals table, marks them **RESERVED for §8.2's env
+     > overrides**, and states the rule as three checkable clauses: config is
+     > read only via `conf_get`/`conf_origin`; `VMTEST_<KEY>` names are
+     > **inbound only** and assigning one is a defect; the non-config globals
+     > listed above remain the driver's to set. The **origin-marker corruption**
+     > is named as the reason, because that is the part that stops someone
+     > re-adding the assignment as a tidy-up.
+     >
+     > It needed more than the one word this item predicted. The amendment also
+     > records something this item did not catch: **three of the six struck
+     > names were never §8.2's names anyway** — the keys are `memory_mib`,
+     > `guest_src_dir`, `guest_target_dir`, which derive `VMTEST_MEMORY_MIB`,
+     > `VMTEST_GUEST_SRC_DIR`, `VMTEST_GUEST_TARGET_DIR`, not §12.3's
+     > `VMTEST_MEM_MIB`, `VMTEST_GUEST_SRC`, `VMTEST_GUEST_TARGET`. Assigning
+     > the abbreviated forms would have created three globals overriding
+     > **nothing** while three real override names went unset — a collision and
+     > a near-miss in one row, and further evidence for the `conf_get` rule.
+     > See [DOC-2 §12.3](../02-design/02-harness-contracts.md).
   6. **DOC-2 §10.2 budgets `tart clone` at 60 s, but §8.2 defines no key for
      that budget — while §10.3 requires a timeout message to name "the
      `vmtest.defaults` key that changes it".** The two sections cannot both be
@@ -1024,6 +1070,34 @@ phase since P1 that boots a guest.
      (`boot_ready_interval`, `stopped_interval`, and the timeouts passed in by
      the caller). Not fixed here: adding a `clone_timeout` key would edit
      §8.2's file, which P2-T2 requires be copied **verbatim**.
+
+     > **RESOLVED AT SOURCE, 2026-08-02 — §10.3 amended; NO key added.** The
+     > implementation stands exactly as described above, so **no code change
+     > was required**: `vm_clone`'s literal 60 with its §10.2 citation and its
+     > "no key exists" message is now the **reference form** the amended §10.3
+     > prescribes for a built-in budget.
+     >
+     > The direction was chosen on a fact this item did not have: the gap is
+     > **systemic**. §10.2's table has gained an `§8.2 key` column, and it shows
+     > **three of five** watchdog sites with no key — `tart clone` (60 s),
+     > single-crate install (900 s) and guest `git clone` (300 s) — while all
+     > six §10.1 poll parameters are keyed. Adding `clone_timeout` would have
+     > fixed the one site that happened to be noticed and left two identical
+     > contradictions standing. §10.3 clause 3 now permits a built-in budget
+     > provided the message cites the §10.2 row and says explicitly that no key
+     > changes it. Reasoning is stated inline at §10.3, including §8.2's own
+     > "a flag per tunable gives a surface larger than its behaviour" applied a
+     > tier down, and that budgets set at ~190x/~8x/~6x measured are hang
+     > detectors rather than schedules.
+     >
+     > **One residual, deliberately left open:** `tart clone`'s 60 s is the one
+     > built-in with a plausible route to being too tight, because §3.3's
+     > by-construction variant may **pull an image** on first use and that is
+     > unmeasured. Recorded at §10.3 and carried to **P8-T2**; if a measured
+     > pull shows it varies by host, it earns a key on the same evidence every
+     > other key rests on. **Phases 5 and 6 must use the reference message form**
+     > for the other two built-ins when they implement those sites.
+     > See [DOC-2 §10.2/§10.3](../02-design/02-harness-contracts.md).
   7. **Two "recognised but not yet built" paths exit 2, a code §2 does not
      assign to that situation.** `vmtest --check-table` is delivered by P4-T2
      and `vmtest run <pattern>` without `--dry-run` by Phases 3–7. Both are
@@ -1047,6 +1121,18 @@ phase since P1 that boots a guest.
      paths are written and syntax-checked; they have not been run. **This is
      incomplete work, not a passed check** — Phase 3 boots a guest and should
      take both.
+
+     > **STILL OPEN — reconfirmed 2026-08-02.** Stated explicitly because items
+     > 3, 4, 5 and 6 above were resolved at source on this date and this one was
+     > **not**, and a reader skimming the resolution notes should not carry the
+     > momentum into this item. Nothing about it changed: both paths remain
+     > **written and `bash -n`-clean but UNRUN**, and neither can be exercised
+     > without a VM in a state only booting produces. The 2026-08-02 work was
+     > documentation and plan edits exclusively — **no VM was created, and
+     > `tart list` was identical before and after**. Concretely still unrun:
+     > P2-T6 fixture **(iv)**, the `running`-VM refusal, and **§5.4 row 2's
+     > `suspended` refusal** (`vmtest:648`, `vmtest:661-662`). **Phase 3 takes
+     > both**, and until it does they are incomplete work.
   10. **Scope of preflight's stopped-state check, stated because DOC-1 §4.1
       does not enumerate "every existing VM the harness would touch".** Read as
       three things: the pinned local base image must exist and be `stopped`
