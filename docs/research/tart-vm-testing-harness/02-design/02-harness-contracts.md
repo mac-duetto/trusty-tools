@@ -1384,13 +1384,14 @@ them as polling would invite someone to add pointless polling around a synchrono
 
 | Site | Observable condition | Interval | Maximum | Grounding |
 |---|---|---|---|---|
-| **boot-ready** | `tart exec <vm> /bin/sh -c 'exit 0'` returns 0 | 2 s | **150 s** | 34.4 s first boot (`vm-install-probe-findings.md:378`, `BOOT_TO_READY_MS=34414`); 18.0 s subsequent (`:483`, `COLD_BOOT_TO_READY_MS=17993`). ~4.4× the measured first boot. |
+| **boot-ready** | `tart exec <vm> /bin/sh -c 'exit 0'` returns 0 | 2 s | **150 s** | **Two sources, and they disagree.** *Original research:* 34.4 s first boot (`vm-install-probe-findings.md:378`, `BOOT_TO_READY_MS=34414`); 18.0 s subsequent (`:483`, `COLD_BOOT_TO_READY_MS=17993`). *Phase 3, 2026-08-02:* **24 s, 28 s, 33 s, 33 s** on four consecutive cold clones of a `stopped` `tahoe-base` (MANIFEST Phase 3, Measurement 1) — **the 18.0 s "subsequent" figure did not reproduce on that host**; every boot looked like the 34.4 s *first*-boot reading. The 150 s maximum is now sized against **the slowest observed boot, 33 s — ~4.5×** — and no longer against `:483`. *(Amended 2026-08-02.)* |
 | **`wait_for_stopped()`** | `tart list` reports state `stopped` | 1 s | **120 s** | `tart stop` asynchrony measured in K1/K1b/K1c; poll overhead measured negligible (`../01-research/logs/k1d-state-poll-overhead.log`). Maximum is a **judgment call** — worst-case flush duration was never measured. The stop this waits on is issued by `vm_request_stop` (§12.2), whose exit code is discarded. |
 | **daemon health** | `GET /health` returns 200 with parseable JSON (§1.3) | 1 s | **60 s** | **Wholly unmeasured.** `launchctl bootstrap` under `tart exec` is confirmed to work (DOC-1 §8.7) but daemon time-to-ready was never timed. |
 
 `vm_wait_ready` polls at a **fixed** 2 s interval, not with exponential backoff.
 Backoff would be a pessimisation here: the distribution is tight and known
-(~18–35 s), so backoff's only effect is to overshoot a ready guest by however far
+(~24–34 s observed, *(range corrected 2026-08-02 from "~18–35 s")*), so backoff's
+only effect is to overshoot a ready guest by however far
 into a long interval it happens to land, in exchange for saving a handful of
 `tart exec` calls whose cost was measured as negligible (K1d).
 

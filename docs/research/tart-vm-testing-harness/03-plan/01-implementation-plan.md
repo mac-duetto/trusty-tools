@@ -1724,6 +1724,15 @@ now replace.
   the daemon-health 60 s maximum will still be one unless P5-T7 produced a real
   number — **say so in the comment**. A tunable whose comment claims a grounding it
   does not have is worse than an unlabelled guess.
+- **Do NOT re-ground §10.1's boot-ready row — it is already done.**
+  *(Noted 2026-08-02.)* MANIFEST Phase 3 recommended that P8-T2 re-ground that row
+  on Phase 3's four boot measurements rather than on the single 18.0 s reading at
+  `vm-install-probe-findings.md:483`, which did not reproduce. **That amendment
+  was made at source instead**, in this PR: §10.1's boot row now cites both the
+  original research figures and the four Phase 3 observations (24 s, 28 s, 33 s,
+  33 s) and states that the 150 s maximum is sized against the slowest observed
+  boot. The maximum is **unchanged** and no new one was invented. This task's
+  remaining scope is the watchdog tier and the daemon-health row.
 - **Acceptance:** every timeout key in `vmtest.defaults` carries a comment that is
   either a `file:line` measurement citation or the literal word `judgment call`.
 - **Depends:** P8-T1
