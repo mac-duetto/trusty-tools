@@ -875,7 +875,7 @@ _verify_wait_for_addr() {
 # a value that was already on screen. It reads exactly what the assertions read,
 # adds no assertion of its own, and cannot change any verdict.
 verify_snapshot_inputs() {
-    local vm="$1" pattern="$2" j
+    local vm="$1" pattern="$2" j d
 
     log "--- ORACLE INPUT SNAPSHOT (pattern ${pattern}) — DIAGNOSTICS ONLY, ASSERTS NOTHING ---"
 
@@ -887,6 +887,23 @@ verify_snapshot_inputs() {
     j=$(vm_exec "$vm" 'tctl version --json' 2>/dev/null) || :
     log 'raw `tctl version --json`:'
     printf '%s\n' "$j" | sed 's/^/    | /' >&2
+
+    # §1.2's SECOND input, as amended 2026-07-31: the version the SOURCE TREE
+    # declares, read where the scenario installed from. Read-only.
+    j=$(vm_exec "$vm" "cd $(conf_get guest_src_dir) && cargo metadata --no-deps --format-version 1" 2>/dev/null \
+        | jq -r '.packages[] | select(.name == "trusty-installer") | .version') || :
+    log "source_tree_version(trusty-installer) via cargo metadata at $(conf_get guest_src_dir): '${j}'"
+
+    # §F-7's PORT-DISCOVERY SURFACE, observed. `tctl port <m> --json-port` only
+    # READS the member's `http_addr` discovery file via
+    # `trusty_common::read_daemon_addr` — it starts nothing and writes nothing,
+    # so it belongs in a snapshot that must not change a verdict. The START half
+    # (`tctl start --json`) DOES have side effects and is therefore left where it
+    # belongs, inside `verify_daemon_liveness`.
+    for d in trusty-search trusty-memory trusty-mpm trusty-review; do
+        j=$(vm_exec "$vm" "tctl port ${d} --json-port" 2>&1) || :
+        log "  tctl port ${d} --json-port -> ${j}"
+    done
 
     j=$(vm_exec "$vm" 'tctl status --json' 2>/dev/null) || :
     log 'raw `tctl status --json` (context only; not one of §1'\''s three oracle inputs):'
