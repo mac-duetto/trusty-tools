@@ -606,9 +606,10 @@ debugging argument parsing while a VM boots.
     cleanup trap still run.
 - **Acceptance:** two mechanical checks —
   ```sh
-  grep -rln 'tart' vmtest-harness --include='*.sh' --include='vmtest' \
+  grep -rlnw 'tart' vmtest-harness --include='*.sh' --include='vmtest' \
       --exclude-dir=spike          # exemption EXPIRES at P3-T4 — see below
   ```
+  (`-w` is load-bearing, not decorative — see the second correction below)
   lists **only** `vmtest-harness/lib/vm.sh` (this is the DOC-1 §3.2 invariant and
   it must stay true for the life of the harness); and `bash -n
   vmtest-harness/lib/vm.sh` is silent. `lib/` files define **functions and nothing
@@ -637,6 +638,35 @@ debugging argument parsing while a VM boots.
   > argument in the same commit that deletes the directory** — an exemption whose
   > subject no longer exists is how a temporary exception becomes a permanent one.
   > A reviewer of P3-T4 should check for both deletions.
+
+  > **Correction, 2026-08-02 (UTC) — the grep is `-w`, because the English word
+  > `started` contains the four letters `tart`. Owner decision.** As written
+  > without `-w` this check was **unsatisfiable for a second, independent
+  > reason**, and unlike the `spike/` conflict above this one never expires.
+  > `grep -rln 'tart'` is a **substring** match, and DOC-2 §4.3 mandates
+  > `started` as one of the four run-registry filenames — so the driver's
+  > `date -u '+%Y-%m-%dT%H:%M:%SZ' > "$VMTEST_RUNDIR/started"` puts
+  > `vmtest-harness/vmtest` in the output on a line that is a **mandated
+  > filename, not an invocation of the OS tool**. Opened by Phase 2
+  > ([MANIFEST.md](./MANIFEST.md) Phase 2, Deviations item 4) and decided here on
+  > reading (a), the narrower of the two candidates.
+  >
+  > **The invariant itself is NOT weakened; it is measured correctly for the
+  > first time.** DOC-1 §3.2 says exactly one production file may name the OS,
+  > and exactly one does — `grep -rlnw` lists only `lib/vm.sh`, and the driver
+  > contains **zero** invocations. An invocation is always word-delimited, so
+  > `-w` is strictly the semantics the check always intended. It still matches
+  > `tart-run.pid` and `tart-run.log`, because `-` is not a word character, so
+  > nothing that *should* be caught stops being caught.
+  >
+  > **Do not "simplify" the `-w` away.** It looks redundant and it is not: drop
+  > it and this check fails on correct work, which is the failure mode that
+  > wastes a reviewer's afternoon and then gets "fixed" by deleting the check.
+  > Rejected out of hand: renaming the registry file (§4.3 mandates the name) or
+  > obfuscating the literal in the driver, which would defeat a review rather
+  > than pass one. **P3-T4 inherits the identical check and is corrected in the
+  > same way** — it would otherwise hit this same line the moment
+  > `--exclude-dir=spike` is deleted.
 - **Depends:** P2-T1
 
 ### P2-T5 — Preflight
@@ -847,7 +877,7 @@ sequence of install steps plus the expectations that follow from them* (DOC-1
   fails; `git log --stat` shows the spike deleted in the same commit that adds
   `lib/source.sh`. **Plus, added 2026-08-01: P2-T4's `--exclude-dir=spike`
   exemption is deleted in that same commit, and the unscoped
-  `grep -rln 'tart' vmtest-harness --include='*.sh' --include='vmtest'` lists only
+  `grep -rlnw 'tart' vmtest-harness --include='*.sh' --include='vmtest'` lists only
   `lib/vm.sh`.**
 
   > **Correction, 2026-08-01 (UTC) — two things this task must carry.** Both are
@@ -864,6 +894,18 @@ sequence of install steps plus the expectations that follow from them* (DOC-1
   >    permanent exemption for a directory that no longer exists — the DOC-1 §3.2
   >    invariant would then be enforced by a command that has quietly stopped being
   >    able to catch a violation in a re-created `spike/`.
+
+  > **Correction, 2026-08-02 (UTC) — the unscoped grep above carries `-w`, for
+  > the same reason P2-T4's does.** This task inherits P2-T4's check verbatim, so
+  > it inherits its defect verbatim: without `-w`, `grep -rln 'tart'` matches the
+  > substring inside `started`, DOC-2 §4.3's mandated run-registry filename, and
+  > lists `vmtest-harness/vmtest` on a line that is a filename rather than an
+  > invocation. See P2-T4's 2026-08-02 correction for the full reasoning. **The
+  > two corrections are independent of each other**: deleting `--exclude-dir=spike`
+  > here (item 2 above) removes the *first* reason this grep could not pass and
+  > does nothing about the second, so `-w` must survive that deletion. A reviewer
+  > of P3-T4 now checks for **three** things: the directory deleted, the
+  > `--exclude-dir=spike` argument deleted, and `-w` still present.
 - **Depends:** P3-T3, P1-T6
 
 ### P3-T5 — `scenarios/install-local.sh` (delivery only) and scenario dispatch
