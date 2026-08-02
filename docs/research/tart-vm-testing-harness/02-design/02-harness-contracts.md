@@ -684,7 +684,7 @@ command would be exactly the kind of false precision this doc set avoids.
 *Expected output shape:* **empty stdout.** Any non-empty stdout means a cargo was
 found and the precondition is violated.
 
-*Assertion predicate:*
+*Assertion predicate,* **channel 1** *(see the amendment below for channel 2):*
 
 ```
 N1 PASS  iff  exit != 0  AND  stdout is empty,  for each of cargo, rustc, rustup
@@ -697,6 +697,84 @@ that the base image drifted (§3) — which is a finding, not a nuisance.
 The base PATH literal above is measured, not invented:
 `vm-install-probe-findings.md:213` records the guest's non-interactive PATH as
 `/bin:/usr/bin:/usr/sbin:/usr/local/bin:/opt/homebrew/bin`.
+
+##### N1 asserts REACHABILITY, not base-PATH absence — what the probe now proves
+
+*(Amended 2026-08-02.)*
+
+**The claim above was wider than the predicate above it, and the gap is exactly
+where a real toolchain lands.** This section opens by saying N1 "asserts that the
+guest genuinely lacks a Rust toolchain at that instant", and DOC-1 §4.3 leans on
+that reading when it calls N1 "the assertion a golden image structurally destroys"
+and makes it one of the two reasons not to bake an image. What channel 1 actually
+tests is narrower: `command -v` under **one** PATH.
+
+Phase 3 measured the difference on a real guest. After `mise use -g rust@1.91` —
+**this project's own provisioning command**, the one `provision.sh` runs — the
+guest has `/Users/admin/.cargo/bin/cargo` and a mise shim, **neither directory on
+the base PATH**, and N1 returned **exit 0, PASS**. A golden image baked the way
+this project would bake one therefore would **not** have been caught, which is the
+precise scenario DOC-1 §4.3 cites as a reason not to bake one.
+
+**Owner decision: make the code match the claim.** The alternative — keep the
+narrow predicate and weaken §6.2's and DOC-1 §4.3's prose to match it — was
+rejected, because DOC-1 §4.3's argument *requires* the wide reading to be true. A
+probe that cannot see the toolchain its own harness installs is not evidence about
+a golden image.
+
+**What N1 now proves.** N1 fails if a Rust toolchain is reachable by **any route a
+later build step could use**, not merely by the base PATH. Channel 1 is unchanged
+and still asserted; channel 2 is added:
+
+| Channel | Route probed | Rationale |
+|---|---|---|
+| **1** | `command -v cargo\|rustc\|rustup` under the measured base PATH | unchanged; the original predicate, still asserted verbatim |
+| **2a** | `$guest_home/.cargo/bin/{cargo,rustc,rustup}` on disk | where `rustup` — and therefore `mise use -g rust@…` — actually puts them |
+| **2b** | `$guest_home/.local/share/mise/shims/{…}` and `$guest_home/.local/bin/{…}` on disk | the shims §7.1 puts second on the full PATH; `.local/bin` is where the forbidden `mise.run` installer writes |
+| **2c** | `mise which cargo\|rustc\|rustup` | resolvable by the very tool `provision.sh` uses to install one |
+| **2d** | `zsh -lc`, `zsh -ic`, `bash -lc`, `bash -ic` → `command -v …` | a PATH an rc file would activate |
+
+*Predicate:* **N1 PASS iff channel 1 passes AND channel 2 finds nothing.** Channel 2
+signals by **stdout content, never by exit status** — its guest-side script always
+exits 0, so "the probe could not run" can never be misread as "the guest is clean".
+An unrunnable channel-2 probe **fails closed**, exit 30.
+
+**On channel 2d and DOC-1 §5.3, because it looks like a contradiction and is not.**
+DOC-1 §5.3 forbids the harness from **depending on** guest shell rc files — a golden
+image once shipped with `~/.zshenv` missing and `cargo` returned 127 under both
+`/bin/sh` and `/bin/zsh`. That rule governs **reliance**. Channel 2d probes rc files
+as a **hazard**: the question is not "does an rc file give the harness cargo" but
+"could an rc file give a **later step** a cargo N1 just certified absent". Probing
+something you refuse to rely on is the opposite use and is legitimate. The harness
+still resolves every path it *uses* explicitly, composed in `vm_exec` and nowhere
+else (§7.3). The reasoning is repeated at the probe itself so that nobody deletes it
+in the name of §5.3 compliance.
+
+*Observed, 2026-08-02, one guest, both directions* (MANIFEST Phase 3):
+
+```
+(A) clean tahoe-base clone
+    N1 PASS (base PATH: cargo=1 rustc=1 rustup=1; and no toolchain reachable
+             on disk, through mise, or through a login/interactive shell)
+    negative_probe_n1 exit=0
+
+(B) same guest, after `mise use -g rust@1.91` -> 0
+    command -v cargo under the BASE PATH channel 1 probes: (not found)
+
+(C) strengthened N1 on that provisioned guest
+    | on-disk       /Users/admin/.cargo/bin/cargo
+    | mise-which    cargo -> /Users/admin/.cargo/bin/cargo
+    …
+    FAIL[30]  negative_probe_n1 exit=30
+```
+
+**Honest limit, recorded rather than glossed.** Channel **2d contributed nothing**
+in case (C): `mise use -g` does not write an rc file, and `tahoe-base`'s own rc
+files do not activate mise, so the login/interactive shells found nothing that 2a-2c
+had not already found. 2d is retained because it is the channel that would catch an
+image whose *rc file* is the only thing making a toolchain reachable — a case this
+project has not yet produced and therefore has not yet observed 2d firing on. It is
+an unexercised guard, not a demonstrated one.
 
 **N2 — Guide-and-abort probe. Runs after the scenario's install steps.**
 

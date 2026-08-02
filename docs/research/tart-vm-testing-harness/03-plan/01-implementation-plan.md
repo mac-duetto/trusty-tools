@@ -802,10 +802,21 @@ sequence of install steps plus the expectations that follow from them* (DOC-1
     This is the only window in which the guest genuinely lacks cargo, and it is
     the assertion a golden image structurally destroys — one of the two stated
     reasons the harness does not bake one (DOC-1 §4.3).
-- **Acceptance:** on a fresh guest, `N1 PASS` with three recorded non-zero exits;
+- **Acceptance:** on a fresh guest, `N1 PASS` with three recorded non-zero exits
+  **on the base-PATH channel and no reachable toolchain on the second channel**;
   then, as a deliberate negative control, run `mise use -g rust@1.91` **before**
   N1 in a throwaway invocation and confirm the driver exits **30** without
   proceeding to provisioning.
+  - *(Reconciled 2026-08-02.)* **This negative control did not pass as written at
+    Phase 3, and that was a finding about N1 rather than about the check.**
+    `mise use -g rust@1.91` installs to `~/.cargo/bin` and the mise shims, neither
+    of which is on the base PATH the probe then examined, so N1 **passed on a
+    guest that demonstrably had a toolchain** — see MANIFEST Phase 3, Deviations
+    item 1. Resolved by owner decision on reading (a): **DOC-2 §6.2 is amended and
+    N1 is strengthened to assert REACHABILITY**, so this acceptance check is now
+    satisfied by the wording above, unchanged. **Re-run 2026-08-02 on one guest,
+    both directions: clean clone → `N1 PASS`, exit 0; same guest after
+    `mise use -g rust@1.91` → `FAIL[30]`, exit 30.** Output in MANIFEST Phase 3.
 - **Depends:** P2-T8
 
 ### P3-T2 — Provisioning
