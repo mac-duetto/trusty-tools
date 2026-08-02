@@ -439,7 +439,15 @@ vmtest_cleanup() {
     # emitted before teardown so that teardown's own seconds are excluded — the
     # figure is the run, not the run plus the guest's removal.
     if [ -n "${RUN_T0_EPOCH:-}" ]; then
-        log "MEASURE run_wall_clock_s $(( $(date '+%s') - RUN_T0_EPOCH )) (exit ${_cleanup_rc}; excludes teardown) — DOC-1 §9's replacement measurement"
+        # The code reported is VMTEST_EXIT when a `die` classified the failure,
+        # and `$?` otherwise.  `$?` ALONE IS WRONG HERE and was observed to be:
+        # `on_exit` runs `local rc=$?` before calling this function, and `local`
+        # is itself a command, so by the time cleanup samples `$?` it is reading
+        # the status of that assignment — always 0.  A failed run therefore
+        # logged "exit 0" beside its own FAIL line.  The write-once VMTEST_EXIT
+        # (§12.4) is the authoritative classification and is what the process
+        # will actually exit with.
+        log "MEASURE run_wall_clock_s $(( $(date '+%s') - RUN_T0_EPOCH )) (exit ${VMTEST_EXIT:-$_cleanup_rc}; excludes teardown) — DOC-1 §9's replacement measurement"
     fi
 
     # The host worktree comes first: a VM that refuses to stop must not also

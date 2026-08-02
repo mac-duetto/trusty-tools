@@ -147,7 +147,16 @@ install_from_path() {
     local vm="$1" guest_dir="$2" crate_dir="$3"
     local crate_path expected rustc_line t0 elapsed rc bins now
 
-    crate_path="${guest_dir}/${crate_dir}"
+    # `crate_dir` IS RELATIVE TO `crates/`, NOT TO THE REPOSITORY ROOT.  §9.1
+    # defines the column as "directory under `crates/`", `--check-table` derives
+    # it by stripping exactly `<workspace_root>/crates/`, and §7.4's worked
+    # invocation spells the guest path out in full:
+    #     cd /Users/admin/vmtest-src/crates/trusty-git-analytics && rustc --version
+    # Joining `guest_dir` to `crate_dir` directly produces
+    # `/Users/admin/vmtest-src/trusty-search`, which does not exist — observed on
+    # the first Phase 5 run, where `cd` failed and `&&` (never `;`, §7.4) stopped
+    # the command from running in the wrong directory, exactly as designed.
+    crate_path="${guest_dir}/crates/${crate_dir}"
 
     # The canonical log line the P5 checkpoint and P5-T8's tripwire both count.
     # It is ALSO appended to a run-scoped ledger, because the count has to be
