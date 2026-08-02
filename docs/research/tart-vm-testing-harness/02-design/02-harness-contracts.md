@@ -605,10 +605,18 @@ start-time comparisons; the residual is one stale VM and a message.
 
 #### 5.3 `--keep` interacts with this and must not be confused for abandonment
 
-`vmtest run --keep` skips teardown so a failed run can be inspected (DOC-1 §3.1).
-The run then exits, so its PID dies, so condition 3 is satisfied — a kept VM would
-look exactly like an orphan. The `keep` marker (condition 4) is what prevents
+`vmtest run --keep` skips **the deletion** so a failed run can be inspected (DOC-1
+§3.1). The run then exits, so its PID dies, so condition 3 is satisfied — a kept VM
+would look exactly like an orphan. The `keep` marker (condition 4) is what prevents
 `clean` from deleting the very thing `--keep` was asked to preserve.
+
+*(Amended 2026-08-02: "skips teardown" → "skips the deletion".)* This paragraph
+already assumed a **`stopped`** kept VM — condition 3 alone does not make a VM
+"look exactly like an orphan"; condition 2 is the other half. The §Shell discipline
+cleanup property 4 that shipped at Phase 3 skipped the stop as well, producing a
+`running` kept VM that `clean` could never remove. Property 4 is now amended to
+skip **only** `vm_delete`, which is what makes this paragraph, condition 2, and
+`--include-kept` describe the same VM.
 
 `clean` lists kept VMs separately, with their age, and does not remove them.
 `vmtest clean --include-kept` removes them too, and is the intended way to tidy up
@@ -2098,9 +2106,36 @@ trap 'vmtest_cleanup; exit 143' TERM
    never created, cleanup does nothing and returns 0. Preflight failures (exit 10)
    must not produce a teardown error on top of the real message.
 4. **Do the right thing under `--keep`.** Write the `keep` marker into the run
-   directory (§4.3, §5.3), print the VM name and an inspection hint, **skip all
-   three of `vm_request_stop`, `vm_wait_for_stopped`, and `vm_delete`**, and leave
-   the run directory in place.
+   directory (§4.3, §5.3), bring the guest to `stopped` via `vm_request_stop` then
+   `vm_wait_for_stopped` exactly as property 5 does, **skip only `vm_delete`**,
+   print the VM name and an inspection hint, and leave the run directory in place.
+
+   *(Amended 2026-08-02. This clause previously read "**skip all three** of
+   `vm_request_stop`, `vm_wait_for_stopped`, and `vm_delete`", which left the VM
+   `running`.)* **The original was wrong, and three other parts of this document
+   are what prove it.** §5.1 condition 2 makes `stopped` a **requirement** of
+   orphanhood, so `clean` classified a kept VM `REFUSED (running, no live registry
+   entry)` and exited **10** — deleting nothing **even under `--include-kept`**,
+   the one flag that exists to remove it. §5.3 justifies the `keep` marker by
+   saying a kept VM "looks exactly like an orphan, because its run exited and its
+   pid is dead"; an orphan is `stopped`, so §5.3 was describing a VM this path
+   never produced. And `vm_manual_hint keep` offered `vmtest clean --include-kept`
+   as an alternative to the manual pair — the harness printing a command that
+   would refuse. Observed with output in MANIFEST Phase 3, Deviations item 2.
+
+   **The other direction was rejected, and by the stronger rule.** Letting
+   `clean --include-kept` accept a `running` kept VM requires `clean` to issue a
+   stop, and §5.2 and §5.4 forbid that far more emphatically than this clause
+   required the skip: *"`clean` never issues `tart stop`, never issues `tart
+   suspend`, and never deletes a VM that is not already `stopped`."* Stopping the
+   guest preserves everything `--keep` exists for — the disk image,
+   `~/.vmtest/toolchain.tsv`, the delivered source tree — and costs only that
+   inspection now begins by booting it. The inspection hint says so, and both
+   commands it prints now work.
+
+   The stop still goes request → **poll** → *(no delete)*. Never a bare `tart stop`
+   treated as completion (DOC-1 §8.1); skipping `vm_delete` is the whole of the
+   difference from property 5.
 5. **Otherwise: `vm_request_stop`, then `vm_wait_for_stopped`, then `vm_delete`, in
    that order, always.** *(Amended 2026-07-31: `vm_request_stop` added. Nothing
    previously issued the shutdown, so the poll had nothing to observe and cleanup

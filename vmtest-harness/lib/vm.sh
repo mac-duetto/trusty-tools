@@ -244,9 +244,16 @@ vm_delete() {
 vm_manual_hint() {
     case "$1" in
     keep)
-        log "--keep: VM '$2' is LEFT ON THE HOST for inspection."
-        log "--keep: inspect it with:  tart exec $2 /bin/sh -c 'cat /Users/admin/.vmtest/toolchain.tsv'"
-        log "--keep: remove it with:   tart stop $2 && tart delete $2   (or: vmtest clean --include-kept)"
+        # AMENDED 2026-08-02, with the cleanup property-4 fix. A kept VM is now
+        # `stopped`, not `running`, so BOTH commands below had to change: the old
+        # inspect line assumed a live guest, and the old remove line led with a
+        # `tart stop` that is now a no-op. Every command this prints must actually
+        # work — printing `vmtest clean --include-kept` beside a VM that `clean`
+        # would refuse is exactly the defect the fix closes.
+        log "--keep: VM '$2' is LEFT ON THE HOST for inspection, in state 'stopped'."
+        log "--keep: boot it first:    tart run --no-graphics $2 &"
+        log "--keep: then inspect:     tart exec $2 /bin/sh -c 'cat /Users/admin/.vmtest/toolchain.tsv'"
+        log "--keep: remove it with:   vmtest clean --include-kept   (or: tart delete $2)"
         ;;
     running)
         log "manual (a human decides, not the harness):  tart stop $2 && tart delete $2"

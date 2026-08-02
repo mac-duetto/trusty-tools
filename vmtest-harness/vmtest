@@ -308,10 +308,42 @@ vmtest_cleanup() {
         log "teardown: no VM named '${VMTEST_VM:-}' is present; nothing to tear down"
     elif [ -n "${VMTEST_VM_CREATED:-}" ]; then
         if [ "${VMTEST_KEEP:-0}" -eq 1 ]; then
-            # Property 4: under --keep, write the marker, print the VM name and
-            # an inspection hint, SKIP all three of request-stop / wait / delete,
-            # and leave the run directory in place.
+            # Property 4 AS AMENDED 2026-08-02: under --keep, write the marker,
+            # bring the guest to `stopped` exactly as any other path does, SKIP
+            # ONLY `vm_delete`, print the inspection hint, and leave the run
+            # directory in place.
+            #
+            # WHY THE STOP IS NOT SKIPPED, stated here because the previous
+            # reading looked more like "keep" and was wrong. §Shell discipline's
+            # property 4 originally said to skip ALL THREE of request-stop / wait
+            # / delete, which left the VM `running` — and THREE other parts of the
+            # design assume `stopped`:
+            #   - §5.1 condition 2 makes `stopped` a REQUIREMENT of orphanhood, so
+            #     `clean` refuses a running kept VM with exit 10 even under
+            #     `--include-kept`, the one flag that exists to remove it;
+            #   - §5.3 justifies the `keep` marker by saying a kept VM "looks
+            #     exactly like an orphan, because its run exited and its pid is
+            #     dead" — an orphan is `stopped`, so §5.3 describes a VM the
+            #     skip-all-three path never produced;
+            #   - `vm_manual_hint keep` offers `vmtest clean --include-kept` as an
+            #     alternative, i.e. the harness told the operator to run a command
+            #     that would refuse.
+            # The other direction — let `clean --include-kept` accept a `running`
+            # kept VM — was rejected: it requires `clean` to issue a stop, and §5.2
+            # / §5.4 forbid that far more emphatically than property 4 required the
+            # skip. Stopping preserves everything `--keep` is FOR (the disk image,
+            # `~/.vmtest/toolchain.tsv`, the delivered tree) and costs only that
+            # inspection now starts by booting it — which the hint says.
+            #
+            # The stop still goes through request -> POLL -> (no delete): never a
+            # bare stop treated as completion (DOC-1 §8.1).
             : > "${VMTEST_RUNDIR:-.}/keep" || :
+            vm_request_stop "${VMTEST_VM:-}"
+            vm_wait_for_stopped "${VMTEST_VM:-}" "$(conf_get stopped_timeout)"
+            if [ -n "${VMTEST_VM_RUN_PID:-}" ]; then
+                wait "$VMTEST_VM_RUN_PID" 2>/dev/null || :   # reap, never kill
+            fi
+            log "teardown: --keep — '${VMTEST_VM:-}' is stopped and PRESERVED (not deleted)"
             vm_manual_hint keep "${VMTEST_VM:-}"
             VMTEST_RUNDIR_OWNED=0
         else
