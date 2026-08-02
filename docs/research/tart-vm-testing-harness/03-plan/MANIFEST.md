@@ -110,7 +110,7 @@ not been completed is not complete, regardless of what its code does.
 |---|---|---|---|
 | **P1** — Transport spike (thin vertical slice) | `complete` | 2026-08-01 | `7df36745`, `c6b18e63` |
 | **P2** — Host-side skeleton | `complete` | 2026-08-01 | `eee03178` |
-| **P3** — Guest bring-up | `complete` | 2026-08-02 | `345e5b12`, `f181a44e` |
+| **P3** — Guest bring-up | `complete` | 2026-08-02 | `345e5b12`, `f181a44e`, + the 2026-08-02 defect-fix commits |
 | **P4** — Expectation table and `--check-table` | `not-started` | — | — |
 | **P5** — Pattern (c) complete: installs, N2, oracle | `not-started` | — | — |
 | **P6** — Pattern (b): branch | `not-started` | — | — |
@@ -125,8 +125,30 @@ all exist and the checkpoint was observed to pass with **no VM created by any
 harness code path**. **Phase 3 complete, 2026-08-02** — the guest bring-up risk
 is retired: `vmtest run local` boots a guest, proves N1, provisions it, hands
 the toolchain across, streams 96.9 MB of worktree in and tears down, exit 0.
-Phase 4 is the next phase to begin, and it is host-side only.
+**Its two contract defects were resolved at source on 2026-08-02**, each verified
+with real VM runs (see the note below). Phase 4 is the next phase to begin, and it
+is host-side only.
 
+> **BOTH PHASE 3 CONTRACT DEFECTS ARE RESOLVED AT SOURCE, 2026-08-02**, by owner
+> decision, each on the reading Phase 3 identified as the narrower/stronger fix.
+> The original text is kept below rather than edited away — this doc set records
+> reversals rather than silently rewriting them.
+>
+> - **(i) N1 — FIXED.** DOC-2 §6.2 gains the amendment *"N1 asserts REACHABILITY,
+>   not base-PATH absence — what the probe now proves"*, and `negative_probe_n1`
+>   gains a second channel that probes on-disk `~/.cargo/bin`, the mise shims,
+>   `~/.local/bin`, `mise which`, and the PATH a login/interactive shell activates.
+>   Plan **P3-T1's acceptance is reconciled** and its negative control now passes.
+>   Verified on one real guest in both directions (Observed result, run 5).
+> - **(ii) `--keep` — FIXED.** DOC-2 §Shell discipline **cleanup property 4** is
+>   amended from "skip all three" to "skip only `vm_delete`", and §5.3's "skips
+>   teardown" to "skips the deletion"; the driver stops the guest and preserves it,
+>   and `vm_manual_hint keep`'s text is rewritten so every command it prints works.
+>   Verified: `--keep` → `stopped` → `clean` reports `KEPT` → `clean --include-kept`
+>   deletes it (Observed result, run 7).
+>
+> Original text, unedited:
+>
 > **Phase 3 found two contract defects, both on paths no earlier phase could
 > reach.** Neither is papered over and neither blocks the checkpoint. **(i) N1
 > is weaker than DOC-2 §6.2 reads**: it probes only the measured base PATH, so a
@@ -223,8 +245,18 @@ Phase 4 is the next phase to begin, and it is host-side only.
   should port the three sentinel assertions into a test of `lib/source.sh`
   rather than let them die with the spike. Deleting the spike without porting
   them would return this item to `open`."*
-- **NEW, opened 2026-08-02 by Phase 3 — N1's predicate does not assert what
-  §6.2's prose claims.** §6.2 says N1 "asserts that the guest genuinely lacks a
+- ~~**NEW, opened 2026-08-02 by Phase 3 — N1's predicate does not assert what
+  §6.2's prose claims.**~~ **CLOSED 2026-08-02 by owner decision, AT SOURCE, on
+  reading (a): the code now matches the claim.** DOC-2 §6.2 carries the amendment
+  *"N1 asserts REACHABILITY, not base-PATH absence"* with a five-row channel table;
+  `negative_probe_n1` gained channel 2 (on-disk `~/.cargo/bin` / mise shims /
+  `~/.local/bin`, `mise which`, and login+interactive shell rc PATHs), signalling by
+  stdout and failing closed if it cannot run; plan P3-T1's acceptance is reconciled.
+  **The negative control now produces its stated result**: on one guest, a clean
+  clone gives `N1 PASS` exit 0, and the same guest after `mise use -g rust@1.91`
+  gives `FAIL[30]` exit 30. Recorded limit: the rc-file channel is an **unexercised**
+  guard — it contributed nothing to the observed catch, and §6.2 says so. Original
+  text: *"§6.2 says N1 'asserts that the guest genuinely lacks a
   Rust toolchain at that instant" and DOC-1 §4.3 calls it "the assertion a
   golden image structurally destroys". What it actually asserts is that no
   cargo/rustc/rustup is reachable **on the measured base PATH**. A guest
@@ -232,13 +264,29 @@ Phase 4 is the next phase to begin, and it is host-side only.
   command — passes N1, observed. **A golden image baked the way this project
   would bake one would therefore NOT be caught**, which is the exact scenario
   DOC-1 §4.3 cites as a reason not to bake one. Needs an owner decision; see
-  Phase 3 Deviations item 1 for the two candidate readings.
-- **NEW, opened 2026-08-02 by Phase 3 — a `--keep` VM cannot be removed by
-  `vmtest clean --include-kept`.** Cleanup property 4 skips request-stop / wait
-  / delete entirely, so the VM is left `running`; §5.1 condition 2 requires
+  Phase 3 Deviations item 1 for the two candidate readings."*
+- ~~**NEW, opened 2026-08-02 by Phase 3 — a `--keep` VM cannot be removed by
+  `vmtest clean --include-kept`.**~~ **CLOSED 2026-08-02 by owner decision, AT
+  SOURCE, on reading (a): `--keep` stops the guest and skips only the delete.**
+  DOC-2 §Shell discipline cleanup property 4 is amended from "skip all three" to
+  "skip only `vm_delete`" — the direction chosen because the alternative would have
+  required `clean` to issue a stop, which §5.2/§5.4 forbid far more emphatically
+  than property 4 required the skip. §5.3's "skips teardown" is corrected to "skips
+  the deletion", and `vm_manual_hint keep` is rewritten so that every command it
+  prints actually works against a `stopped` VM. **Observed end to end**: the run
+  left `vmtest-p3keep2` `stopped`, `clean` reported `KEPT (would not delete)`
+  exit 0, and `clean --include-kept` reported `ORPHANED (deleted)` exit 0 with the
+  registry directory pruned. Original text: *"Cleanup property 4 skips request-stop
+  / wait / delete entirely, so the VM is left `running`; §5.1 condition 2 requires
   `stopped`, so `clean` refuses it with exit 10 even with `--include-kept`.
   `vm_manual_hint keep`'s own text offers that command as an alternative to the
-  manual pair, and it does not work. See Phase 3 Deviations item 2.
+  manual pair, and it does not work. See Phase 3 Deviations item 2."*
+- **NEW, opened 2026-08-02 — DOC-2 §10.1's boot-ready row is re-grounded; P8-T2
+  no longer needs to.** The `:483` "~18 s subsequent" figure does not reproduce on
+  this host. The row now cites **both** the original research figures and Phase 3's
+  four observations, and states that the **unchanged** 150 s maximum is sized
+  against the slowest observed boot (33 s, ~4.5×). A note to that effect is on
+  P8-T2, whose remaining scope is the watchdog tier and the daemon-health row.
 
 ---
 
@@ -1221,7 +1269,14 @@ Phase 4 is the next phase to begin, and it is host-side only.
 
 ## Phase 3 — Guest bring-up: N1, provisioning, toolchain hand-off, source delivery
 
-- **State:** `not-started`
+- **State:** `complete`
+  *(Corrected 2026-08-02: this field read `not-started` while the summary table
+  read `complete` and the checkpoint output was pasted below it. Under the state
+  rules — "`in-progress` → `complete` **only** when the checkpoint has been **run**
+  and its output is pasted into `Observed result`" — `complete` is the correct
+  value, and the schema's own note that "the sections are authoritative and the
+  table is the index" means the wrong field was the authoritative one. Caught while
+  making the three 2026-08-02 defect fixes.)*
 - **Pass condition:** `vmtest run local` **exits 0**, and its log shows, in order:
   `N1 PASS` with a non-zero exit recorded for each of `cargo`, `rustc`, `rustup`; a
   provisioning block ending with `rustc_version 1.91.1`; a streamed byte count
@@ -1538,15 +1593,140 @@ Phase 4 is the next phase to begin, and it is host-side only.
   (silent, all six)
   ```
 
+  ---
+
+  **RE-RUN 2026-08-02 AFTER THE THREE DEFECT FIXES — three more VMs, both
+  directions of the strengthened N1, and the `--keep` lifecycle end to end.**
+  Same host. `tart list` before this set: the three baseline rows, no `vmtest-*`.
+
+  **Run 5 — `vmtest-n1neg50047`. The P3-T1 negative control, BOTH DIRECTIONS ON
+  ONE GUEST.** Positive first, on a genuinely clean `tahoe-base` clone; then
+  `mise use -g rust@1.91` on that same guest; then N1 again. Teardown through the
+  driver's EXIT trap.
+
+  ```
+  ### VM: vmtest-n1neg50047
+  ### guest ready; state: running
+
+  =============== (A) POSITIVE — genuinely clean tahoe-base clone ===============
+  vmtest: N1 PASS (base PATH: cargo=1 rustc=1 rustup=1; and no toolchain reachable on disk, through mise, or through a login/interactive shell)
+  negative_probe_n1 exit=0   (expected 0)
+
+  =============== (B) provision the guest, exactly as P3-T1 states ==============
+  mise use -g rust@1.91 -> 0
+  guest ~/.cargo/bin/cargo present? yes
+  command -v cargo under the BASE PATH N1's channel 1 probes: (not found)
+
+  =============== (C) NEGATIVE — strengthened N1 on the provisioned guest =======
+      | on-disk       /Users/admin/.cargo/bin/cargo
+      | on-disk       /Users/admin/.local/share/mise/shims/cargo
+      | mise-which    cargo -> /Users/admin/.cargo/bin/cargo
+      | on-disk       /Users/admin/.cargo/bin/rustc
+      | on-disk       /Users/admin/.local/share/mise/shims/rustc
+      | mise-which    rustc -> /Users/admin/.cargo/bin/rustc
+      | on-disk       /Users/admin/.cargo/bin/rustup
+      | on-disk       /Users/admin/.local/share/mise/shims/rustup
+      | mise-which    rustup -> /Users/admin/.cargo/bin/rustup
+  vmtest: N1: a Rust toolchain is REACHABLE by the route(s) listed above — precondition VIOLATED
+  vmtest: FAIL[30]: N1 FAIL — the guest already has a Rust toolchain where DOC-2 §6.2 requires none. Two likely causes: base-image drift (DOC-2 §3), or a guest that has ALREADY BEEN PROVISIONED — including a golden image baked by this project's own `mise use -g rust@1.91`, which installs into $HOME/.cargo/bin and the mise shims and which the pre-2026-08-02 probe could not see. Either way this is a FINDING, not a nuisance. Base-PATH exits: cargo=1 rustc=1 rustup=1
+  negative_probe_n1 exit=30   (plan P3-T1 expects 30)
+
+  vmtest: teardown: deleted vmtest-n1neg50047
+  ```
+
+  **This is the exact case that PASSED before the fix.** Deviations item 1's (C1)
+  recorded `negative_probe_n1 exit=0 (plan P3-T1 expects 30) <-- DOES NOT FIRE`
+  against the identical guest state. It now fires. Note **(B)'s middle line**: the
+  base-PATH channel *still* reports `(not found)`, unchanged — the fix did not
+  alter channel 1, it added a channel that sees what channel 1 structurally cannot.
+
+  **Also recorded, because it is a limit and not a success:** the
+  `rc-activated` channel produced **no lines** in (C). `mise use -g` writes no rc
+  file and `tahoe-base`'s own rc files do not activate mise, so 2a-2c caught the
+  toolchain first. That channel is an **unexercised guard**; it has never been
+  observed firing on anything this project has produced.
+
+  **Run 6 — `vmtest-p3fix1`. The full checkpoint, re-run end to end against the
+  strengthened probe, `vmtest run local`, exit 0.** Every clause still met:
+
+  ```
+  vmtest: MEASURE boot_to_ready_s 34 (P1 measured 34.4 s first boot, ~18 s subsequent)
+  vmtest: --- N1 precondition probe (DOC-2 §6.2; DOC-1 §4.2) ---
+  vmtest: N1 PASS (base PATH: cargo=1 rustc=1 rustup=1; and no toolchain reachable on disk, through mise, or through a login/interactive shell)
+  vmtest: mise detected at /opt/homebrew/bin/mise (2026.6.0 macos-arm64 (2026-06-03)) — REUSED, not installed
+  vmtest: gh detected at /opt/homebrew/bin/gh — REUSED, not installed
+  vmtest: rustc: rustc 1.91.1 (ed61e7d7e 2025-11-07)
+  vmtest: provisioning wall clock 78s (measured baseline PROVISION_MS=30079, i.e. 30.079 s)
+  vmtest: provisioning OK (rustc_version 1.91.1)
+  vmtest: host file set (git ls-files -co --exclude-standard | wc -l): 5344
+  vmtest: streamed 97003520 bytes in 4s
+  vmtest: guest file set (find ! -type d):     5344
+  vmtest: guest file set (find -type f):       5340  (regular files only; excludes tracked symlinks)
+  vmtest: file counts match: guest == host == 5344
+  vmtest: target/ absent in the guest, by construction
+  vmtest: run complete: pattern 'local' reached the end of its scenario. Teardown follows.
+  vmtest: teardown: deleted vmtest-p3fix1
+  exit=0
+  ```
+
+  The N1 line is the **only** behavioural difference from run 2's log. **No false
+  positive on a clean guest**, which is the failure mode a widened probe risks and
+  the reason the positive direction is not optional.
+
+  **Run 7 — `vmtest-p3keep2`. `--keep`, then `clean`, then `clean --include-kept`.**
+
+  ```
+  $ vmtest-harness/vmtest run local --runid p3keep2 --keep ; echo "exit=$?"
+  … identical through the scenario …
+  vmtest: teardown: --keep — 'vmtest-p3keep2' is stopped and PRESERVED (not deleted)
+  vmtest: --keep: VM 'vmtest-p3keep2' is LEFT ON THE HOST for inspection, in state 'stopped'.
+  vmtest: --keep: boot it first:    tart run --no-graphics vmtest-p3keep2 &
+  vmtest: --keep: then inspect:     tart exec vmtest-p3keep2 /bin/sh -c 'cat /Users/admin/.vmtest/toolchain.tsv'
+  vmtest: --keep: remove it with:   vmtest clean --include-kept   (or: tart delete vmtest-p3keep2)
+  exit=0
+
+  $ tart list
+  local  tahoe-base       50   33   1 minute ago  stopped
+  local  vmtest-p3keep2   100  33   4 seconds ago stopped      <-- STOPPED, not running
+  OCI    …
+  $ ls -A ~/.local/state/vmtest-harness/runs/p3keep2
+  keep  pattern  pid  started  tart-run.log  tart-run.pid  toolchain.tsv  vm
+
+  $ vmtest-harness/vmtest clean                    # the keep marker still protects it
+  vmtest-p3keep2  stopped  KEPT (would not delete)
+  clean (no flag) exit=0
+
+  $ vmtest-harness/vmtest clean --include-kept     # and THIS now works
+  vmtest-p3keep2  stopped  ORPHANED (deleted)
+  clean --include-kept exit=0
+
+  $ tart list                                      # no vmtest-* entry
+  local  tahoe-base   50  33  2 minutes ago  stopped
+  OCI    …
+  $ ls -A ~/.local/state/vmtest-harness/runs/
+  (empty)
+  ```
+
+  All four states the fix had to produce, in order: **`stopped` after `--keep`**
+  (Deviations item 2 observed `running`); the `keep` marker present so the VM is
+  still protected from a plain `clean`; `KEPT (would not delete)` at exit **0**
+  (item 2 observed `REFUSED (running…)` at exit **10**); and `ORPHANED (deleted)`
+  under `--include-kept`, with the registry directory pruned with it. **The `--keep`
+  VM was deleted before this record was written.**
+
   **BEFORE and AFTER `tart list` are identical** in every column that is not a
   timestamp: the same three rows, `tahoe-base` still **Disk 50 / Size 33 /
   stopped**, both OCI rows still **Disk 50 / Size 32 / stopped**. The base image
-  was not modified, re-pulled or re-tagged. **Five VMs existed during this
-  phase** — `vmtest-p3ckpt`, `vmtest-p3ckpt2`, `vmtest-p3dirty`,
-  `vmtest-p3keep` (harness-created) and `vmtest-p3fixture`, `vmtest-p3susp`
-  (hand-created for the two Phase 2 fixtures) — and **every one was torn down
-  through `vm_request_stop` → `vm_wait_for_stopped` → `vm_delete`**. **No
-  `vmtest-*` VM survived, and none leaked.** `tart suspend` was never issued.
+  was not modified, re-pulled or re-tagged. **NINE VMs existed during this
+  phase** *(count corrected 2026-08-02: this read "Five" while listing six names,
+  and the three defect-fix runs add three more)* — `vmtest-p3ckpt`,
+  `vmtest-p3ckpt2`, `vmtest-p3dirty`, `vmtest-p3keep`, `vmtest-n1neg50047`,
+  `vmtest-p3fix1`, `vmtest-p3keep2` (harness-created) and `vmtest-p3fixture`,
+  `vmtest-p3susp` (hand-created for the two Phase 2 fixtures) — and **every one was
+  torn down through `vm_request_stop` → `vm_wait_for_stopped` → `vm_delete`**, the
+  `--keep` VM by `vmtest clean --include-kept` after its own `vm_request_stop` →
+  `vm_wait_for_stopped`. **No `vmtest-*` VM survived, and none leaked.**
+  `tart suspend` was never issued.
 - **Files delivered:**
   - create `vmtest-harness/lib/verify.sh` — `negative_probe_n1` (P3-T1; §F-4)
   - create `vmtest-harness/lib/provision.sh` — `provision_guest`,
@@ -1563,6 +1743,20 @@ Phase 4 is the next phase to begin, and it is host-side only.
   - **delete** `vmtest-harness/spike/` — `spike-transport.sh` and
     `dirty-check-fixture.txt`, in the same commit that adds `lib/source.sh`
   - modify `docs/research/tart-vm-testing-harness/03-plan/MANIFEST.md` (P3-T7)
+
+  **Added 2026-08-02 by the three defect fixes** (Deviations items 1 and 2, and the
+  §10.1 boot-row re-grounding):
+  - modify `vmtest-harness/lib/verify.sh` — `negative_probe_n1` channel 2 and
+    `n1_reachability_probe` (fix 1)
+  - modify `vmtest-harness/vmtest` — cleanup property 4's `--keep` branch now stops
+    the guest and skips only `vm_delete` (fix 2)
+  - modify `vmtest-harness/lib/vm.sh` — `vm_manual_hint keep` rewritten for a
+    `stopped` VM (fix 2)
+  - modify `.../02-design/02-harness-contracts.md` — §6.2 amendment (fix 1); §5.3
+    and §Shell discipline cleanup property 4 amendments (fix 2); §10.1 boot-ready
+    row and its prose range (fix 3)
+  - modify `.../03-plan/01-implementation-plan.md` — P3-T1 acceptance reconciled
+    (fix 1); P8-T2 note (fix 3)
 - **Measurements:** the phase's four full runs, plus the two fixture VMs.
 
   | # | Measurement | Value | Command / source |
@@ -1593,8 +1787,24 @@ Phase 4 is the next phase to begin, and it is host-side only.
   distribution looks like the 34.4 s *first* boot rather than the 18.0 s
   subsequent one, on four consecutive cold clones of a `stopped` base. The
   150 s `boot_ready_timeout` is ~4.5× the slowest observed and is comfortable;
-  no change is proposed, but **P8-T2 should re-ground §10.1's boot row on these
-  four points rather than on the single 18 s reading.**
+  no change is proposed, but ~~**P8-T2 should re-ground §10.1's boot row on these
+  four points rather than on the single 18 s reading.**~~ **DONE AT SOURCE
+  2026-08-02 — P8-T2 no longer needs to.** §10.1's boot-ready row now cites **both**
+  the original research figures (`:378` 34.4 s first boot, `:483` 18.0 s subsequent)
+  **and** these four Phase 3 observations, records that `:483` did not reproduce,
+  and states that the **unchanged** 150 s maximum is sized against the slowest
+  observed boot — **33 s, ~4.5×** — rather than against `:483`. No new maximum was
+  invented. §10.1's "distribution is tight and known (~18–35 s)" prose is corrected
+  to **~24–34 s** in the same amendment, and a note is left on P8-T2.
+
+  **Three further boot readings, 2026-08-02, from the defect-fix runs:** the
+  strengthened-N1 control clone, `vmtest-p3fix1` at **34 s** and `vmtest-p3keep2`
+  at **34 s**. Six harness-measured cold boots now read **24, 28, 33, 33, 34,
+  34 s** — the `:483` figure remains unreproduced, and the slowest is still well
+  inside 150 s. Provisioning on those two runs read **78 s** and **66 s**, both
+  inside P1-T5's 3× bound (90.24 s) but the slowest yet seen; the 24–78 s spread
+  across six runs continues to look like the network-bound step DOC-2 §10.2
+  describes, and the harness logged no NOTE because neither exceeded 90 s.
 
   **On measurement 6 — this is now observed on four independent runs.** The
   literal `-type f` check the plan originally carried would report a shortfall
@@ -1607,6 +1817,13 @@ Phase 4 is the next phase to begin, and it is host-side only.
 - **Deviations from plan:**
   1. **CONTRACT DEFECT — N1 asserts something weaker than DOC-2 §6.2's prose
      claims, and plan P3-T1's own negative control cannot pass as written.**
+
+     > **RESOLVED AT SOURCE 2026-08-02, on reading (a).** Pointers:
+     > DOC-2 **§6.2**, amendment *"N1 asserts REACHABILITY, not base-PATH absence —
+     > what the probe now proves"*; `vmtest-harness/lib/verify.sh`
+     > (`negative_probe_n1` channel 2 and `n1_reachability_probe`); plan **P3-T1**,
+     > *(Reconciled 2026-08-02)*. Verification output in **Observed result, run 5**.
+     > **The text below is the original finding, unedited.**
 
      §6.2 introduces N1 as asserting "that the guest genuinely lacks a Rust
      toolchain at that instant", and DOC-1 §4.3 leans on that reading when it
@@ -1643,8 +1860,30 @@ Phase 4 is the next phase to begin, and it is host-side only.
      control to place a cargo on the base PATH. (a) is the stronger fix and is
      what DOC-1 §4.3's argument requires to be true. **The implementation is
      left faithful to §6.2 as written**; it has not been quietly widened.
+
+     **Resolution, 2026-08-02 — reading (a), by owner decision.** §6.2 is amended
+     and N1 is widened; the implementation is now faithful to the amended §6.2, not
+     to the original. What the strengthened probe adds, beyond the base PATH: the
+     on-disk `$guest_home/.cargo/bin`, `$guest_home/.local/share/mise/shims` and
+     `$guest_home/.local/bin` entries; `mise which cargo|rustc|rustup`; and the
+     PATH `zsh -lc`, `zsh -ic`, `bash -lc` and `bash -ic` activate through rc
+     files. **The rc-file channel is deliberately a HAZARD probe and is the
+     opposite of the reliance DOC-1 §5.3 forbids** — the reasoning is stated at the
+     probe itself and in §6.2 so that nobody deletes it in the name of §5.3.
+     Channel 2 signals by **stdout, never by exit status**, and an unrunnable probe
+     **fails closed** at exit 30. Recorded honestly: **the rc-file channel did not
+     fire** in the observed catch — 2a-2c found the toolchain first — so it is an
+     unexercised guard rather than a demonstrated one.
   2. **CONTRACT DEFECT — a `--keep` VM is left `running`, so
      `vmtest clean --include-kept` can never remove it.**
+
+     > **RESOLVED AT SOURCE 2026-08-02, on reading (a).** Pointers: DOC-2
+     > **§Shell discipline, cleanup property 4** (amended "skip all three" → "skip
+     > only `vm_delete`"); DOC-2 **§5.3** (*"skips teardown"* → *"skips the
+     > deletion"*); `vmtest-harness/vmtest` (`vmtest_cleanup`'s `--keep` branch) and
+     > `vmtest-harness/lib/vm.sh` (`vm_manual_hint keep`). Verification output in
+     > **Observed result, run 7**. **The text below is the original finding,
+     > unedited.**
 
      Cleanup property 4 skips request-stop / wait / delete entirely under
      `--keep`, so the VM stays in state `running`. §5.1 condition 2 requires
@@ -1670,6 +1909,20 @@ Phase 4 is the next phase to begin, and it is host-side only.
      offers *"(or: `vmtest clean --include-kept`)"* as an alternative to the
      manual pair — **that alternative does not work**, which is the harness
      telling an operator to run a command that will refuse.
+
+     **Resolution, 2026-08-02 — reading (a), by owner decision, and the document
+     is what was wrong.** The code implemented cleanup property 4 exactly as DOC-2
+     §Shell discipline wrote it ("skip all three"); that clause is the defect,
+     because §5.1 condition 2, §5.3's own justification and `vm_manual_hint keep`'s
+     own text all three assume `stopped`. Reading (b) was rejected on the stronger
+     rule: it needs `clean` to issue a stop, and §5.2/§5.4 forbid that far more
+     emphatically than property 4 required the skip. `--keep` now runs
+     `vm_request_stop` → `vm_wait_for_stopped` → **reap the run pid** → *(no
+     `vm_delete`)*, so the guest is preserved and reclaimable. `vm_manual_hint keep`
+     is rewritten with it, because a hint that assumed a live guest would otherwise
+     have become the next wrong-command-printed defect: it now says to boot the VM
+     before inspecting, and leads the removal line with `vmtest clean
+     --include-kept`, which works.
 
      **Not resolved here** — this needs an owner decision, and the two readings
      trade against each other. **(a)** `--keep` stops the VM but does not delete
@@ -1780,9 +2033,12 @@ Phase 4 is the next phase to begin, and it is host-side only.
   scenario stays a description of steps; and the run lifecycle contains **no**
   teardown call — teardown is the EXIT trap's sole responsibility, on every path.
 - **Tasks:** P3-T1 … P3-T7 complete. **Every acceptance check in the phase was
-  run**, including the two Phase 2 deferred to it. **One acceptance check did
+  run**, including the two Phase 2 deferred to it. ~~**One acceptance check did
   not produce its stated result and that is a finding, not a pass**: P3-T1's
-  negative control (Deviations item 1).
+  negative control (Deviations item 1).~~ **P3-T1's negative control now produces
+  its stated result** — re-run 2026-08-02 against the strengthened probe, exit 30
+  on the provisioned guest and exit 0 on the clean one (Observed result, run 5).
+  Every acceptance check in the phase now passes as written.
 
 ## Phase 4 — `expected-binaries.tsv` and `--check-table`
 
