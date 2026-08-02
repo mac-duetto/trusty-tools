@@ -570,14 +570,23 @@ debugging argument parsing while a VM boots.
 ### P2-T4 — `lib/vm.sh` — the OS boundary
 
 - **Files:** create `vmtest-harness/lib/vm.sh`.
-- **Contract:** DOC-2 §12.2 (`lib/vm.sh` surface — **twelve** signatures, given in
-  full), §12.1 (calling conventions), §10.1/§10.2 (poll and watchdog parameters),
+- **Contract:** DOC-2 §12.2 (`lib/vm.sh` surface — **fifteen** signatures, given
+  in full; *twelve* until the 2026-08-02 amendment added `vm_require_cli`,
+  `vm_list` and `vm_manual_hint`), §12.1 (calling conventions),
+  §10.1/§10.2 (poll and watchdog parameters),
   §10.4 (**no `timeout(1)` on macOS**); DOC-1 §3.2 (the designed extension seam for
   Linux — §12.2), §8.1, §8.2.
-- **Do:** implement `vm_clone`, `vm_size`, `vm_boot`, `vm_wait_ready`, `vm_state`,
-  `vm_exec`, `vm_exec_raw`, `vm_exec_stdin`, `vm_request_stop`,
-  `vm_wait_for_stopped`, `vm_assert_stopped`, `vm_delete`, exactly per §12.2's
-  return/emit column.
+- **Do:** implement `vm_require_cli`, `vm_list`, `vm_clone`, `vm_size`, `vm_boot`,
+  `vm_wait_ready`, `vm_state`, `vm_exec`, `vm_exec_raw`, `vm_exec_stdin`,
+  `vm_request_stop`, `vm_wait_for_stopped`, `vm_assert_stopped`, `vm_delete`,
+  `vm_manual_hint`, exactly per §12.2's return/emit column.
+  - **`vm_require_cli`, `vm_list` and `vm_manual_hint` were added to §12.2 on
+    2026-08-02** — the original twelve covered one VM's *lifecycle* completely and
+    covered *enumeration* and *operator guidance* not at all. All three exist to
+    **preserve** the DOC-1 §3.2 invariant: the preflight `tart`-on-`PATH` check,
+    the VM enumeration §5.1/§4.1 need, and the manual-command text for three
+    driver sites all name the OS tool, and the driver may not. See §12.2's
+    amendment for the per-function reasoning.
   - **`vm_exec` deliberately does not die on non-zero** — it returns the guest's
     status verbatim so a caller can distinguish "the command failed" from "the
     harness failed", which is precisely what N1 needs, since N1's *expected* result
