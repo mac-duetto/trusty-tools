@@ -557,6 +557,14 @@ preflight() {
 # cannot be compared against DOC-1 §9's cost baseline, and comparing against
 # that baseline is most of what the numbers are for."  The bash version is
 # printed too, so a bug report says which bash produced it.
+#
+# THE MODE IS PASSED AS A WORD, NOT AS A FLAG VALUE.  It was previously the
+# expansion `${VMTEST_DRY_RUN:+dry run}` at the call site, and `:+` tests for a
+# NON-EMPTY string, not for truth — so `VMTEST_DRY_RUN=0` expanded to `dry run`
+# and every real run announced itself as a dry run in the first line of its own
+# log.  Phase 2 could not catch it: every run it made was a dry run, so the
+# banner was accidentally correct.  Found on the Phase 3 checkpoint run,
+# 2026-08-02; see MANIFEST Phase 3, Deviations.
 # ---------------------------------------------------------------------------
 
 print_banner() {
@@ -566,6 +574,7 @@ print_banner() {
     out "runid ${VMTEST_RUNID}${FLAG_RUNID:+ (flag)}"
     out "vm ${VMTEST_VM}"
     out "rundir ${VMTEST_RUNDIR}"
+    out "host repo ${VMTEST_HOST_REPO}"
     out "keep ${VMTEST_KEEP}"
     out "effective configuration (key value (origin)):"
     for key in $CONF_KEYS; do
@@ -615,7 +624,7 @@ cmd_run() {
     # replaced with the full form by provision_guest in Phase 3.
     VMTEST_GUEST_ENV='PATH=/bin:/usr/bin:/usr/sbin:/usr/local/bin:/opt/homebrew/bin; export PATH;'
 
-    print_banner "${VMTEST_DRY_RUN:+dry run}"
+    if [ "$VMTEST_DRY_RUN" -eq 1 ]; then print_banner 'dry run'; else print_banner ''; fi
     preflight
 
     if [ "$VMTEST_DRY_RUN" -eq 1 ]; then
