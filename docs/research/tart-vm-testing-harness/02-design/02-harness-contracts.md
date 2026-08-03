@@ -121,11 +121,43 @@ what the scenario structurally cannot produce.** Three confirmed causes, each
 narrowing the predicate in exactly one way:
 
 **(a) `stack doctor` does not enumerate `tsv_scope_packages`, so health is
-quantified over the members it actually reports.** `commands/stack/doctor.rs:151`
-resolves its member set as `stable_set()` **filtered to `m.daemon`** — a different
-set from the TSV's in-scope packages. **`trusty-code`, `trusty-installer` and
-`tga` are structurally absent from doctor's output** and can never satisfy a
-predicate quantified over `member(p)`. They are not exempted from verification:
+quantified over the members it actually reports.** **`trusty-code`,
+`trusty-installer` and `tga` are structurally absent from doctor's output** and
+can never satisfy a predicate quantified over `member(p)`.
+
+> **CAUSE CORRECTED 2026-08-03.** This bullet previously attributed all three
+> absences to a single mechanism — `stack doctor` filtering `stable_set()` to
+> `m.daemon`. **That explains exactly one of the three.** There are **two
+> distinct causes**, and a future reader who acts on the single-cause version
+> will reason wrongly about what happens when the scope changes.
+
+- **`trusty-code` and `trusty-installer` are not in `stable_set()` at all.**
+  `stable_set()` (`crates/trusty-installer/src/commands/stable_set.rs:173-183`)
+  has exactly **seven** members — `trusty-search`, `trusty-memory`,
+  `trusty-analyze`, `trusty-review`, `tga`, `trusty-console`, `trusty-mpm`.
+  Neither package appears in it. **They would be absent even if the `m.daemon`
+  filter were deleted outright**; their absence is upstream of any filtering.
+- **`tga` IS in `stable_set()`, and it is the filter that removes it.** It is
+  declared `StableMember::new("tga", "tga", false, false)`
+  (`stable_set.rs:179`); the third argument of `StableMember::new` is `daemon`
+  (`stable_set.rs:109`), so `tga` carries **`daemon: false`** and is dropped by
+  `doctor.rs:151`, which resolves doctor's member set as `stable_set()`
+  **filtered to `m.daemon`**. `tga` is the *only* one of the three this
+  mechanism accounts for.
+
+**The two causes reach one conclusion**, which is why the original single-cause
+text could be wrong about the mechanism and still land on the correct predicate:
+none of the three is in doctor's member set, so no health obligation can attach
+to any of them. **This correction has zero runtime effect.** `verify.sh:659`
+tests membership **dynamically** —
+`jq -e --arg m "$pkg" 'any(.members[]; .member == $m)'` — so the oracle asks the
+report what it actually contains rather than deriving it from a stated cause, and
+**already handles both cases identically**. A package later added to
+`stable_set()`, or flipped to `daemon: true`, is picked up with no edit to the
+oracle; that is the property the dynamic test buys, and it is unaffected by which
+of the two causes applied.
+
+They are not exempted from verification:
 their **presence is asserted by `verify_binaries`** (all 13 in-scope binaries,
 including `tcode`, `trusty-installer`, `tctl` and `tga`) **and by
 `verify_single_install`** for the multi-binary ones, both of which are unaffected
