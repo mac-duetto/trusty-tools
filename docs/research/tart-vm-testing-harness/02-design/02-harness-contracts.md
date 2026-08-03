@@ -188,15 +188,77 @@ another member ever changes strategy. Naming `trusty-mpm` in the predicate would
 hardcode today's `stable_set` into the oracle.
 
 **(c) `down` is accepted under the source-install patterns (b) and (c) when
-`plist_installed == false`.** A launchd member reports `down` because it has no
-plist, and a plist is written by a member's `service install` step — reached from
-`tctl install`'s service-bootstrap step (`install.rs:528`,
-`plans_service_bootstrap`), which **DOC-1 §6.5 bans from patterns (b) and (c)**.
-Nothing else in a source-based scenario bootstraps one before the oracle reads
-`doctor`. So `down` under `plist_installed == false` is the *expected* state of a
-correctly source-installed stack, not a packaging defect. `plist_installed` is
-required to be `false` for this acceptance: a launchd member that **does** have a
-plist and is still `down` is a real failure and still fails.
+`plist_installed == false`.** The acceptance is correct and `verify.sh` implements
+it correctly. **The cause previously recorded for it was not.**
+
+> **CAUSE FALSIFIED AND CORRECTED 2026-08-03.** This bullet previously asserted:
+> *"A launchd member reports `down` because it has no plist."* **That is false**,
+> and this repo's own `#4246` fix (`6078b21c`) is what made it false. It is
+> corrected here rather than deleted, per this doc set's record-reversals
+> convention. **The conclusion is unchanged and `verify.sh`'s predicate is NOT
+> modified by this correction** — only the reasoning a future reader would act on.
+
+**Mechanism — `health` is a pure HTTP fact, and `plist_installed` is not an input
+to it.** For a `Launchd` member, `probe_member_health` delegates to
+`probe_member_http_blocking` (`commands/probe.rs:146`), a blocking `GET /health`
+against the member's recorded address. `probe_http.rs:213-218` maps
+`NoAddress | Refused | Timeout | HttpError | BadEnvelope | ProbeFailed` to
+`down` — **every one of those is a transport fact about the request**.
+`plist_installed` is computed **only** at `doctor.rs:117-124`, solely to populate
+the report field of the same name, and is **read by nothing on the probe path**.
+No value of `plist_installed` can move `health`.
+
+**Observed refutation, in both directions, on the development host (2026-08-03).**
+The investigation that produced this correction recorded four launchd members with
+**no plist** reporting **`healthy`** — `trusty-search`, `trusty-analyze`,
+`trusty-review` and `trusty-console`, each with `"plist_installed": false`. A
+second reading the same day, taken while re-verifying this amendment, records the
+complementary case:
+
+```
+{"member":"trusty-search","health":"down","plist_installed":false}
+{"member":"trusty-memory","health":"down","plist_installed":true}
+{"member":"trusty-analyze","health":"down","plist_installed":false}
+{"member":"trusty-review","health":"down","plist_installed":false}
+{"member":"trusty-console","health":"down","plist_installed":false}
+{"member":"trusty-mpm","health":"unknown","plist_installed":null}
+```
+
+`trusty-memory` **has** a plist, its `trusty-memory serve` process was running,
+and it still reports `down`. Between them the two readings refute the causal claim
+from both sides: members without a plist have been observed `healthy`, and a
+member with a plist has been observed `down`. In both readings health tracked the
+**probe**, never the plist.
+
+**The correct statement.** Under DOC-1 §6.5's patterns (b) and (c), **nothing
+starts the daemons.** `plans_service_bootstrap` (`install.rs:528`) is banned under
+those patterns and is the only thing in a source-based scenario that would launch
+them. A daemon that was never started answers nothing on `/health`, so the probe
+returns `NoAddress`/`Refused` and `health_string()` renders `down`. **That is the
+expected state of a correctly source-installed stack**, not a packaging defect,
+and it is why the acceptance is right. **`plist_installed == false` is a
+co-indicator of "no bootstrap ran", not the cause of `down`.** Both facts descend
+from the same upstream cause — the banned bootstrap step — and neither causes the
+other.
+
+**Consequence 1 — the fail-closed branch this bullet promises is INERT under the
+very patterns it is gated to.** The original text justified requiring
+`plist_installed == false` by adding that *"a launchd member that **does** have a
+plist and is still `down` is a real failure and still fails."* But under (b)/(c)
+no plist is ever written, so that guard **can never be `true`** and that branch
+**can never fire**. It contributes no discriminating power under (b)/(c). It is
+**not wrong — it is dead**, and it is recorded as dead here so a future reader does
+not count it as live protection. It becomes reachable only under a pattern where a
+bootstrap actually runs, which is pattern (a) — where the `H_P` term is already
+not gated in, so the strict form applies there anyway.
+
+**Consequence 2 — do NOT reuse `plist_installed` as a "was bootstrapped" signal
+under pattern (a).** It is sound as a co-indicator only under (b)/(c), where the
+bootstrap is *banned* and the implication runs one way. Pattern (a) carries no
+such guarantee, and this host is the standing counter-example: it has carried
+launchd members answering `/health` with **no** plist, alongside `trusty-memory`
+**with** one. `plist_installed` reports whether a file exists at
+`plist_path_for(binary)` (`doctor.rs:117-124`) and nothing more.
 
 **The `stale` justification below was wrong, and is corrected here rather than
 deleted.** It reads "on a freshly installed VM where daemons have just been
@@ -216,9 +278,13 @@ nothing else.
 
 **Pattern (a) may legitimately assert more strictly, and Phase 7 should consider
 it.** Under (a) the harness is permitted `tctl install`, whose service-bootstrap
-step *does* write plists, so `plist_installed == true` and a real `healthy` or
-`stale` are reachable — cause (c) does not apply there, and the `H_P` term above
-is already pattern-gated to `{b, c}` so that (a) inherits the strict form. Causes
+step **actually starts the daemons** (and, incidentally, writes their plists), so
+a member can answer `/health` and a real `healthy` or `stale` becomes reachable —
+cause (c) does not apply there, and the `H_P` term above is already pattern-gated
+to `{b, c}` so that (a) inherits the strict form. *(Emphasis corrected
+2026-08-03 alongside cause (c): what makes `healthy` reachable under (a) is the
+**start**, not the plist write. Reading it as the plist is the same falsified
+causal step that (c) records.)* Causes
 (a) and (b) are structural and apply under every pattern. **This is recorded for
 Phase 7, not implemented now**; asserting it before a pattern-(a) run has ever
 been observed would be inventing a contract, which is what this amendment exists
