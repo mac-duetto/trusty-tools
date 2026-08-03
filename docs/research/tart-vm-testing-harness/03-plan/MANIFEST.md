@@ -2353,7 +2353,26 @@ Phase 6 does not start around it.
 
 ## Phase 5 — Pattern (c) complete: install steps, N2, and the full oracle
 
-- **State:** `not-started`
+- **State:** `blocked`
+
+  > **CORRECTED 2026-08-03 — this field read `not-started` while P5-T1…P5-T9 were
+  > complete, two full-stack VM runs had been performed and this section's
+  > `Observed result` was several hundred lines long.** The record contradicted
+  > itself: the Summary table already carried `blocked` for P5, and the section —
+  > which the Schema declares **authoritative** over the table — carried the
+  > placeholder. The section was the wrong one. `blocked` is the correct value
+  > under the State rules: the phase's tasks are done, the checkpoint was run and
+  > NOT met, and the Deviations field names what was needed to unblock (an owner
+  > decision on DOC-2 §1.1, and RC-2's disposition).
+  >
+  > **This is the second instance of this slip** — Phase 3's `State` was found
+  > stale and fixed on 2026-08-02. Twice is a pattern, and the cause is structural:
+  > the update rule makes the MANIFEST the **final** task of a phase (P5-T9), so
+  > the `State` field is written last, at exactly the point where an autonomous
+  > session is most likely to end. Phases 1, 2, 4, 6, 7 and 8 were re-checked
+  > against their sections on 2026-08-03 and are correct; only P5 was stale.
+  > **Recorded rather than silently fixed**, per this file's own rule that a
+  > record whose history is rewritten is a record nobody can audit.
 - **Pass condition:** `vmtest run local` **exits 0**, and the run log shows:
   Counts below are **derived**, with today's value as the expected literal; if the
   TSV has changed, the derivation is the condition and the literal follows it.
@@ -2362,13 +2381,19 @@ Phase 6 does not start around it.
   emitted from inside that crate's directory;
   (ii) `verify_binaries` reporting **N/N in-scope binaries present**, where N is the
   count of `in_scope=yes` rows (**13** today);
-  (iii) `tctl stack doctor --json` parsed, with every one of `tsv_scope_packages`'
-  values (**8** today) — **including `trusty-mpm`** — satisfying
-  `health ∈ {healthy, stale}`, `on_path == true`, `version != null`;
+  (iii) `tctl stack doctor --json` parsed, with every in-scope package **that
+  `doctor` reports as a member** satisfying `on_path == true`, `version != null`,
+  and `health ∈ H_c` — where, per **DOC-2 §1.1 as amended 2026-08-03 (§1.1a)**,
+  `H_c` is `{healthy, stale}`, plus `unknown` for a member with
+  `plist_installed == null`, plus `down` for a member with
+  `plist_installed == false`. In-scope packages `doctor` does not report —
+  `trusty-code`, `trusty-installer` and `tga`, which are not daemon members —
+  carry **no health obligation**; their coverage is clause (ii) and clause (iv);
   (iv) one `verify_single_install` passing per multi-binary in-scope package
   (**4** today): `trusty-search` (2 binaries), `trusty-memory` (**3**),
   `trusty-installer` (2), and `trusty-mpm` (2);
-  (v) N2 recorded with its observed exit code and stderr;
+  (v) N2 recorded with its observed exit code and stderr — **and, per DOC-2 §6.2
+  as amended 2026-08-03, an N2 recorded `BLOCKED` SATISFIES THIS CLAUSE**;
   (vi) a total wall clock, logged, which is recorded here as the **first full-stack
   measurement**.
 - **Observed result:** **PASS CONDITION NOT MET.** Clause (iii) failed and is
