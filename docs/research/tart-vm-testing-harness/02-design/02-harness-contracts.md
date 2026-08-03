@@ -926,6 +926,86 @@ would be inventing a contract. What the harness needs from `trusty-installer` is
 and an operator reading the code should not have to know which half fired. The
 message says which.
 
+##### RC-2 CLOSED as *unreachable-by-design* — N2 records BLOCKED and the run continues
+
+*(Amended 2026-08-03 — owner decision. RC-2 is closed here, not left unpinned.)*
+
+**N2's guide-and-abort is not reachable through `tctl install` from a guest.** This
+is not "not yet measured"; it is structural, it was read out of the source and
+confirmed by observation on two real guest runs and once on the host (MANIFEST
+Phase 5, Deviations item 2, Measurements item 3), and no change on the harness side
+can reach it. **Both** causes must be stated, because fixing only the first makes
+the situation worse:
+
+**1. The consent gate returns before `install_one` is ever called.**
+`decide_install_gate` (`commands/install_gate.rs:77-85`) returns
+`InstallGate::Refuse` whenever `--yes` is absent and stdin is not a TTY — **and the
+guest exec channel is not a TTY**. Its arm in `install.rs:266-278` prints the
+refusal to stderr and **`return 3`**, before `install_all` on line 295. The cargo
+guard at **`install.rs:826`** lives inside `install_one`, which that refusal never
+reaches. Observed, identically, three times:
+
+```
+exit 3, stdout 0 bytes, stderr 204 bytes:
+  info: ✓ git Git-155) found
+  tctl install: refusing to install without confirmation in a non-interactive
+  context; pass --yes to proceed non-interactively, or --dry-run to preview
+  what would be installed.
+```
+
+`3` is non-zero and distinct from 1, so it satisfies RC-2's *shape* — but it is the
+**consent-gate code, not the cargo-absent code**, and recording it as RC-2's would
+be exactly the false precision this section refuses.
+
+**2. Adding `--yes` would be worse, and is therefore forbidden here.** It reaches
+`install_one`, which is **prebuilt-tarball-first**: the cargo guard sits only in the
+`Outcome::Fallback` arm, reached **only when the prebuilt download fails**. On a
+networked guest the download **succeeds** — and installs **released binaries over
+the source-built ones under test**, before the oracle reads them. That is precisely
+the false pass **DOC-1 §6.5** bans `tctl install` from patterns (b)/(c) to prevent,
+and it is the worst failure mode a harness has. A probe that can corrupt its own
+run's subject is not a probe.
+
+**Status: RC-2 is CLOSED as *unreachable-by-design*, not satisfied and not
+outstanding.** The distinction matters. RC-2 is not a request `trusty-installer`
+has failed to answer — it is a request that **cannot be exercised through this
+entry point at all**, so leaving it open would leave a permanently unresolvable
+item on the register and imply work that would never be done. The behaviour it
+describes is real (`which::which("cargo")` at `install.rs:826`, and the same guard
+in `upgrade.rs:502` and `self_update.rs:295`); what is unreachable is **N2's route
+to it**. Anything that wants to assert it must reach the guard by a route that does
+not run `tctl install` on a networked guest — a unit test in
+`crates/trusty-installer`, or an offline-network scenario — and **neither is this
+harness's job**. Recorded so a future contributor does not re-open RC-2 and re-run
+the same probe expecting a different answer.
+
+**What N2 does now.** It records the observation and continues, loudly. This is the
+doc set's **own established remedy** — §F-7's "record as BLOCKED and skip" branch,
+written so a required-contract gap "cannot strand the phase". **The predicate is
+NOT weakened.** Exit 0, non-empty stdout and empty stderr all still **die 30**, and
+a stderr that *does* carry a cargo token still takes the **normal PASS path**. Only
+the one shape proven unreachable — non-zero exit, clean stdout, guidance on stderr,
+no cargo token — is recorded instead of asserted, and it prints
+
+```
+*** N2 BLOCKED (RC-2 / DOC-2 §6.2) — NOT A PASS. ***
+```
+
+on **every run**. A BLOCKED N2 therefore satisfies the Phase 5 checkpoint's clause
+(v), which asks for the observation to be recorded (plan §Phase 5 checkpoint, as
+corrected 2026-08-03); it never satisfies a claim that guide-and-abort was proved.
+
+**Reconciling P5-T2.** P5-T2 anticipated only that the observed code "might be
+`1`", and told the implementer not to tighten the predicate to an observed code
+unless it was non-zero and distinct from 1. The observed code **is** non-zero and
+distinct from 1 — and tightening to it would still have been wrong, because it is
+a different guard's code. P5-T2's instinct (an observed code is not a documented
+contract) was right; its enumeration of outcomes was incomplete, and it did not
+anticipate the predicate being unreachable at all. **The correct action under
+P5-T2 is the one taken: do not tighten, do not weaken, record.** P5-T2's rule that
+nothing in `crates/trusty-installer` may be changed to make the predicate happier
+stands, and nothing was.
+
 #### 6.3 Lifecycle position — pinned
 
 DOC-1 §4.2 flags the position as unresolved. Pinned here:
@@ -2318,8 +2398,19 @@ Recorded in the same register as DOC-1 §14, so they are not lost.
 
 - **RC-1 — unified daemon health envelope** (§1.3). Does not exist. Until it does,
   the oracle asserts liveness only, and DOC-1 §7.1's third JSON source is aspirational.
-- **RC-2 — `tctl install` cargo-absent exit code and message** (§6.2). Not pinned to
-  a verified value. N2's predicate is deliberately weak until it is.
+- ~~**RC-2 — `tctl install` cargo-absent exit code and message** (§6.2). Not pinned
+  to a verified value. N2's predicate is deliberately weak until it is.~~
+  **CLOSED 2026-08-03 as *unreachable-by-design*** (§6.2's RC-2 closure). Not
+  satisfied and not outstanding: `decide_install_gate`'s `Refuse` arm returns **3**
+  before `install_one` is called whenever `--yes` is absent and stdin is not a TTY,
+  so the cargo guard at `install.rs:826` cannot be reached from a guest; and `--yes`
+  would reach a prebuilt-tarball-first path that installs **released** binaries over
+  the source-built ones under test, the exact false pass DOC-1 §6.5 exists to
+  prevent. N2 records **BLOCKED** and prints it every run; every other failure shape
+  still dies 30. Asserting the guard needs a route that is not `tctl install` on a
+  networked guest — a `crates/trusty-installer` unit test, or an offline-network
+  scenario — and neither is this harness's job. **Do not re-open and re-run the same
+  probe.**
 - **Full base-image digest** (§3.2). Never recorded in the research — only the
   truncated `sha256:a8e1...` (`vm-install-probe-findings.md:652`). Must be captured
   at implementation time.

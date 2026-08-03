@@ -179,7 +179,7 @@ faithfully recording the state between the two amendments.
 | **P2** | Driver, config, exit codes, run registry, `lib/vm.sh`, preflight, `clean` | no | Host-side contract risk |
 | **P3** | N1 probe, provisioning, toolchain hand-off, `lib/source.sh` (local), delivery-only scenario | yes | Guest bring-up risk |
 | **P4** | `expected-binaries.tsv`, `--check-table` | no | Expectation-table drift |
-| **P5** | Pattern (c) installs + the full oracle; RC-2 pinned | yes | Oracle risk; **first full-stack timing** |
+| **P5** | Pattern (c) installs + the full oracle; RC-2 **closed as unreachable-by-design**, not pinned (2026-08-03, DOC-2 §6.2) | yes | Oracle risk; **first full-stack timing** |
 | **P6** | Pattern (b) | yes | — |
 | **P7** | Pattern (a) | yes | — |
 | **P8** | Hardening, docs, measurement write-back | mixed | Doc drift |
@@ -1223,7 +1223,12 @@ measurement.
 > coverage is clause (ii) and clause (iv);
 > (iv) `verify_single_install` passing for `trusty-search` (2 binaries),
 > `trusty-memory` (**3**), `trusty-installer` (2), and `trusty-mpm` (2);
-> (v) N2 recorded with its observed exit code and stderr;
+> (v) N2 recorded with its observed exit code and stderr — **and, per DOC-2 §6.2
+> as amended 2026-08-03, an N2 recorded `BLOCKED` SATISFIES THIS CLAUSE.** N2's
+> guide-and-abort is unreachable through `tctl install` from a guest for two
+> structural reasons (§6.2's RC-2 closure); the clause asks for the observation to
+> be recorded, and a BLOCKED record with its exit code and stderr is that
+> observation. Every other N2 failure shape still dies 30 and still fails the run;
 > (vi) a total wall clock, logged, which is recorded in the MANIFEST as the
 > **first full-stack measurement**.
 
@@ -1249,6 +1254,16 @@ measurement.
 > run, and `on_path`/`version` are still asserted for every member `doctor`
 > reports. **Nothing under `crates/` was changed** — the harness adapts to the
 > product, never the reverse.
+
+> **CORRECTED 2026-08-03 — clause (v), by owner decision.** It previously read only
+> "N2 recorded with its observed exit code and stderr", which P5-T2 read as
+> requiring a PASS. RC-2's behaviour is **unreachable through `tctl install` from a
+> guest** (DOC-2 §6.2, closed 2026-08-03 as *unreachable-by-design*), so the clause
+> could never go green while being read that way — the checkpoint would have been
+> permanently unmeetable for a reason that has nothing to do with whether the
+> install worked. It now says explicitly that a **BLOCKED record satisfies it**.
+> Every N2 failure shape other than the one proven unreachable still dies 30 and
+> still fails the run.
 
 ### P5-T1 — `install_from_path` and the per-build-step `rustc` assertion
 
@@ -1339,6 +1354,35 @@ DOC-2 §6.2 deliberately leaves N2's predicate weak because the code at
   either the pinned code or a comment citing `DOC-2 §6.2 RC-2` explaining why the
   weak predicate stands.
 - **Depends:** P5-T1
+
+> **RECONCILED 2026-08-03 — step 3's branches were both wrong, and the outcome was
+> a third thing neither anticipated.** The observed code is **3**: non-zero and
+> distinct from 1, so step 3 routes to the first branch — "RC-2 is satisfied in
+> practice; tighten N2 to assert that **exact** code". **Doing that would have been
+> a defect.** `3` is `decide_install_gate`'s **consent-gate** code
+> (`install_gate.rs:77-85` → `install.rs:266-278`), returned before `install_one`
+> is ever called; the cargo guard at `install.rs:826` was never reached, so
+> pinning `3` would have recorded a *different guard's* code as RC-2's and made
+> N2 assert something it had not tested. Step 2 asked which path the cargo-absent
+> error takes and assumed one of them was taken; **none was.**
+>
+> **RC-2 is now CLOSED as *unreachable-by-design* (DOC-2 §6.2), not pinned and not
+> left open.** Two structural causes, both read from the source and confirmed by
+> observation: the consent gate returns 3 before `install_one` whenever `--yes` is
+> absent and stdin is not a TTY (a guest exec channel is not); and `--yes` would
+> reach a **prebuilt-tarball-first** path whose cargo guard only fires when the
+> download *fails*, so on a networked guest it would install **released** binaries
+> over the source-built ones under test — the false pass DOC-1 §6.5 exists to
+> prevent.
+>
+> **What this task actually delivered stands.** P5-T2's real rule — an observed
+> code is not a documented contract, and **`crates/trusty-installer` is not to be
+> changed to make the harness happier** — was correct and was followed; nothing
+> under `crates/` was changed. The acceptance is met by the second of its two
+> alternatives: `lib/verify.sh` carries a comment block citing `DOC-2 §6.2 RC-2`,
+> and the MANIFEST carries the literal exit code and verbatim stderr. **This task
+> needs no re-execution**; it is reconciled here so a future reader does not
+> re-run it expecting branch one to apply.
 
 ### P5-T3 — N2 guide-and-abort probe
 
