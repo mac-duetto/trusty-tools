@@ -860,9 +860,15 @@ verify_versions() {
 #   - START: `tctl start [<members>] --json` (main.rs -> lifecycle::run_start).
 #     `--json` also suppresses the interactive confirmation, so it is
 #     non-interactive by construction.
-#   - PORT:  `tctl port <member> --json-port` -> `{"addr":"host:port","port":N}`
+#   - PORT:  `tctl port <member> --json-port` -> `{"addr":"<HOST>","port":N}`
 #     (port.rs, `PortFormat::Json`), read from the member's `http_addr` discovery
 #     file via `trusty_common::read_daemon_addr`.
+#     CORRECTED 2026-08-03: §F-7 originally recorded `addr` as `"host:port"`. IT
+#     IS THE HOST ALONE — `format_output` splits on the last colon and emits only
+#     the left side, pinned by the crate's own test
+#     (`format_output("127.0.0.1:7879", Json) == {"addr":"127.0.0.1","port":7879}`).
+#     The oracle composes `host:port` from BOTH fields; see
+#     `_verify_wait_for_addr`, which is where the misreading was found by running.
 # So §F-7 step 2 applies and the BLOCKED branch of step 3 is NOT taken. NO PORT
 # MAP IS HARDCODED — step 3 forbids it, because that would be inventing the very
 # contract RC-1 exists to request, in the one place DOC-2 is most emphatic that
@@ -954,15 +960,51 @@ verify_daemon_liveness() {
 # _verify_wait_for_addr <vm_name> <member>
 # EMITS the member's `host:port`, or nothing on timeout. Polls the OBSERVABLE
 # condition (DOC-1 §4.3) at §10.1's daemon-health interval and maximum.
+#
+# `.addr` IS THE HOST ALONE, NOT `host:port` — AND THE FIELD NAME SAYS OTHERWISE.
+# §F-7's recorded reading of `commands/port.rs` (repeated in this file's
+# `verify_daemon_liveness` header and in MANIFEST Phase 5 Measurements item 4)
+# says `tctl port <m> --json-port` emits `{"addr":"host:port","port":N}`. IT DOES
+# NOT. `format_output`'s `PortFormat::Json` arm splits the address on its last
+# colon and puts only the LEFT side in `addr`:
+#
+#     Some(serde_json::json!({ "addr": host, "port": port }).to_string())
+#
+# and the crate's own unit test pins that shape exactly:
+#
+#     format_output("127.0.0.1:7879", PortFormat::Json)
+#       == Some(r#"{"addr":"127.0.0.1","port":7879}"#)
+#
+# Reading `.addr` alone therefore yields a PORTLESS host, and the health URL
+# built from it (`http://127.0.0.1/health`) can never reach any daemon — observed
+# 2026-08-03 as HTTP 000 for all four members, on a run where `tctl start --json`
+# had just reported every one of them `installed + bootstrapped`. THE ADDRESS IS
+# COMPOSED FROM BOTH FIELDS, and `.port` is required, not optional: a response
+# carrying `.addr` but no `.port` is not an address and is treated as "not yet
+# recorded" rather than silently producing a portless URL again.
+#
+# THE HARNESS ADAPTS TO THE PRODUCT, NEVER THE REVERSE: `port.rs` is correct and
+# unchanged; it was §F-7's transcription of it that was wrong, and that is
+# corrected at source alongside this.
 _verify_wait_for_addr() {
-    local vm="$1" member="$2" budget interval t0 out addr
+    local vm="$1" member="$2" budget interval t0 out host port
     budget=$(conf_get health_timeout)
     interval=$(conf_get health_interval)
     t0=$(date '+%s')
     while :; do
         out=$(vm_exec "$vm" "tctl port ${member} --json-port" 2>/dev/null) || :
-        addr=$(printf '%s' "$out" | jq -r '.addr // ""' 2>/dev/null || :)
-        if [ -n "$addr" ]; then printf '%s\n' "$addr"; return 0; fi
+        host=$(printf '%s' "$out" | jq -r '.addr // ""' 2>/dev/null || :)
+        port=$(printf '%s' "$out" | jq -r '.port // ""' 2>/dev/null || :)
+        if [ -n "$host" ] && [ -n "$port" ]; then
+            # An IPv6 host contains colons and must be bracketed in a URL. This
+            # is why `port.rs` splits on the LAST colon, and the same hazard
+            # reaches the URL the oracle builds.
+            case "$host" in
+                *:*) printf '[%s]:%s\n' "$host" "$port" ;;
+                *)   printf '%s:%s\n'   "$host" "$port" ;;
+            esac
+            return 0
+        fi
         if [ $(( $(date '+%s') - t0 )) -ge "$budget" ]; then return 0; fi
         sleep "$interval"
     done

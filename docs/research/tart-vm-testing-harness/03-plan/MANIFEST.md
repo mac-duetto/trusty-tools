@@ -2601,6 +2601,20 @@ Phase 6 does not start around it.
     (`port.rs`, `PortFormat::Json`), read from the member's `http_addr` discovery
     file via `trusty_common::read_daemon_addr`.
 
+    > **CORRECTED 2026-08-03 — this reading is WRONG, and it cost a run.** `addr`
+    > is the **HOST ALONE**, not `host:port`. `format_output`'s `PortFormat::Json`
+    > arm splits the address on its last colon and serialises only the left side:
+    > `serde_json::json!({ "addr": host, "port": port })`, pinned by the crate's
+    > own unit test `format_output("127.0.0.1:7879", PortFormat::Json) ==
+    > {"addr":"127.0.0.1","port":7879}`. `verify_daemon_liveness` was built on the
+    > wrong reading and composed `http://127.0.0.1/health` with **no port**, which
+    > cannot reach any daemon — observed as **HTTP 000 for all four members** on
+    > the 2026-08-03 run, on which `tctl start --json` had just reported every one
+    > of them `installed + bootstrapped`. The oracle now composes the address from
+    > **both** fields and treats a response with `.addr` but no `.port` as "not yet
+    > recorded" rather than building a portless URL. `port.rs` is correct and
+    > unchanged; the defect was §F-7's transcription of it.
+
   `verify_daemon_liveness` implements §1.3's INTERIM predicate against those two
   commands and carries the RC-1 scoping statement as a header comment, as P5-T7
   requires. **It did not execute** (clause (iii) fired first). The read-only half
