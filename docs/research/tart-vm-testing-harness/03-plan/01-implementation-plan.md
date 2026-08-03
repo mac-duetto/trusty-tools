@@ -1700,6 +1700,34 @@ and asserts `tm` **present**. A run that does not find `tm` is a **failure**.
 > `in_scope=yes` rows (**13** today), with `tm` and `trusty-mpm` explicitly among
 > them, and `tctl stack doctor --json` reporting `trusty-mpm` as installed.
 
+**Carried into Phase 7 from DOC-2 §1.1a — two assertion candidates, NEITHER
+implemented before Phase 7 runs.** Both are recorded so they are not lost and not
+smuggled in early; asserting either before a pattern-(a) run has been observed
+would be inventing a contract, which is what §1.1a exists to stop.
+
+1. **Pattern (a) may assert daemon health more strictly.** Under (a) the harness
+   is permitted `tctl install`, whose service-bootstrap step **actually starts the
+   daemons**, so a real `healthy`/`stale` is reachable and §1.1a's cause (c) does
+   not apply. `H_P` is already pattern-gated to `{b, c}`, so (a) inherits the
+   strict form with no edit. Confirm against the first observed pattern-(a) run
+   before tightening anything further.
+2. **NEW (logged 2026-08-03) — assert `plist_installed == false` DIRECTLY under
+   patterns (b) and (c).** Under those patterns it is a **derivable invariant**:
+   DOC-1 §6.5 bans `plans_service_bootstrap` (`install.rs:528`), no bootstrap
+   runs, therefore no plist is written. Asserting it directly would **fail closed
+   if `tctl install` ever leaked into a source-install scenario** — precisely the
+   false pass §6.5 bans that step to prevent, and which nothing in today's oracle
+   detects.
+   - **This is a NEW assertion, NOT a widening of the health predicate.** It does
+     not touch `H_P`, does not relax any clause, and is independent of the
+     `down`-acceptance. Do not implement it by editing the health predicate.
+   - **Why it belongs here and not in Phase 5:** DOC-2 §1.1a Consequence 1 shows
+     the `plist_installed == false` guard is **inert** under (b)/(c) as currently
+     used — it can never be `true`, so the fail-closed branch it promises never
+     fires. This assertion is the productive use of that otherwise-dead signal,
+     and it is a scope addition, so it waits for an owner decision rather than
+     riding in on a re-run.
+
 ### P7-T1 — `install_from_registry`
 
 - **Files:** modify `vmtest-harness/lib/source.sh`.

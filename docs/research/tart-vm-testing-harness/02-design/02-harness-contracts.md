@@ -284,11 +284,21 @@ cause (c) does not apply there, and the `H_P` term above is already pattern-gate
 to `{b, c}` so that (a) inherits the strict form. *(Emphasis corrected
 2026-08-03 alongside cause (c): what makes `healthy` reachable under (a) is the
 **start**, not the plist write. Reading it as the plist is the same falsified
-causal step that (c) records.)* Causes
-(a) and (b) are structural and apply under every pattern. **This is recorded for
-Phase 7, not implemented now**; asserting it before a pattern-(a) run has ever
-been observed would be inventing a contract, which is what this amendment exists
-to stop doing.
+causal step that (c) records.)* Causes (a) and (b) are structural and apply under
+every pattern. **This is recorded for Phase 7, not implemented now**; asserting it
+before a pattern-(a) run has ever been observed would be inventing a contract,
+which is what this amendment exists to stop doing.
+
+**A second, separate Phase 7 candidate — assert `plist_installed == false`
+DIRECTLY under (b)/(c).** Under those patterns it is a **derivable invariant**: no
+bootstrap ran, therefore no plist was written. Asserting it directly would **fail
+closed** if `tctl install` ever leaked into a source-install scenario — the exact
+false pass DOC-1 §6.5 bans that step to prevent, and which nothing in the oracle
+currently detects. **This is a NEW assertion, not a widening of the health
+predicate**: it does not touch `H_P` and does not relax anything. It is the
+productive use of the signal that Consequence 1 above shows is otherwise inert
+under (b)/(c). **Recorded for Phase 7, not implemented now** (plan §PHASE 7,
+MANIFEST open items).
 
 Two deliberate choices, both judgment calls with no measurement behind them:
 

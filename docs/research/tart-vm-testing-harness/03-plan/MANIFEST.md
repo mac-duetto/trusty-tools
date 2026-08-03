@@ -343,6 +343,20 @@ Phase 6 does not start around it.
   four observations, and states that the **unchanged** 150 s maximum is sized
   against the slowest observed boot (33 s, ~4.5×). A note to that effect is on
   P8-T2, whose remaining scope is the watchdog tier and the daemon-health row.
+- **NEW, opened 2026-08-03 by the §1.1a cause corrections — assert
+  `plist_installed == false` DIRECTLY under patterns (b)/(c). Deferred to Phase 7;
+  NOT implemented.** Under (b)/(c) it is a **derivable invariant**: DOC-1 §6.5 bans
+  `plans_service_bootstrap` (`install.rs:528`), so no bootstrap runs and no plist is
+  written. Asserting it **directly** would fail closed if `tctl install` ever leaked
+  into a source-install scenario — **the exact false pass §6.5 bans that step to
+  prevent, and which nothing in today's oracle detects**. It is a **NEW assertion,
+  not a widening of the health predicate**: it does not touch `H_P` and relaxes
+  nothing. Its motivation is DOC-2 §1.1a Consequence 1 — as used today the
+  `plist_installed == false` guard is **inert** under (b)/(c) (it can never be
+  `true`, so the fail-closed branch it promises never fires), and this is the
+  productive use of that otherwise-dead signal. Recorded at plan §PHASE 7
+  (candidate 2) and DOC-2 §1.1a. **Scope addition — needs an owner decision, per
+  the stop rule; it did not ride in on the Phase 5 re-run.**
 
 ---
 
