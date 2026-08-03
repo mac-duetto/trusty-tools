@@ -530,9 +530,24 @@ vmtest_cleanup() {
 # The explicit `exit` in the signal traps is NOT decoration: after a trap
 # handler returns, bash may resume the interrupted command rather than
 # terminating.  The explicit exit is what makes §2's user-abort codes real.
+#
+# A SIGNAL MUST CLASSIFY ITSELF **BEFORE** `vmtest_cleanup`, not after.  Cleanup
+# emits the MEASURE run_wall_clock_s line, and that line reports
+# `${VMTEST_EXIT:-$_cleanup_rc}`.  On a signal path nothing has called `die`, so
+# VMTEST_EXIT was unset and `_cleanup_rc` sampled `$?` of the preceding `log`
+# — zero.  An ABORTED RUN THEREFORE LOGGED `exit 0`: observed as
+# `MEASURE run_wall_clock_s 387 (exit 0; excludes teardown)` on a run terminated
+# with 143.  Anything reading that line to judge run success scored an
+# interrupted run as clean.  `_abort_classify` is the fix and it is
+# WRITE-ONCE (§12.4), exactly as `die` is: a scenario failure already classified
+# by `die` is NOT overwritten by a signal that arrives during unwinding, because
+# the operator needs to know what broke, not what broke last.  The literal
+# `exit` codes stay unconditional — they are the OS-level abort contract of §2,
+# a separate thing from the run's classification.
+_abort_classify() { [ -n "${VMTEST_EXIT:-}" ] || VMTEST_EXIT=$1; }
 on_exit() { local rc=$?; vmtest_cleanup; exit "$rc"; }
-on_int()  { log 'SIGINT — tearing down'; vmtest_cleanup; exit 130; }
-on_term() { log 'SIGTERM — tearing down'; vmtest_cleanup; exit 143; }
+on_int()  { log 'SIGINT — tearing down';  _abort_classify 130; vmtest_cleanup; exit 130; }
+on_term() { log 'SIGTERM — tearing down'; _abort_classify 143; vmtest_cleanup; exit 143; }
 
 trap on_exit EXIT
 trap on_int  INT
