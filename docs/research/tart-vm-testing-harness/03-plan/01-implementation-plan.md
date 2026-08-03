@@ -1211,15 +1211,44 @@ measurement.
 > `rustc --version` line emitted from inside that crate's directory;
 > (ii) `verify_binaries` reporting **N/N in-scope binaries present**, where N is the
 > count of `in_scope=yes` rows (**13** today);
-> (iii) `tctl stack doctor --json` parsed, with every one of `tsv_scope_packages`'
-> values (**8** today) —
-> **including `trusty-mpm`** — satisfying `health ∈ {healthy, stale}`,
-> `on_path == true`, `version != null`;
+> (iii) `tctl stack doctor --json` parsed, with every in-scope package **that
+> `doctor` reports as a member** satisfying `on_path == true`, `version != null`,
+> and `health ∈ H_c` — where, per **DOC-2 §1.1 as amended 2026-08-03 (§1.1a)**,
+> `H_c` is `{healthy, stale}`, plus `unknown` for a member with
+> `plist_installed == null` (the product deliberately declines to probe it,
+> `#4246`), plus `down` for a member with `plist_installed == false` (no plist,
+> because `tctl install`'s service step is banned from pattern (c) by DOC-1 §6.5).
+> In-scope packages `doctor` does not report — `trusty-code`, `trusty-installer`
+> and `tga`, which are not daemon members — carry **no health obligation**; their
+> coverage is clause (ii) and clause (iv);
 > (iv) `verify_single_install` passing for `trusty-search` (2 binaries),
 > `trusty-memory` (**3**), `trusty-installer` (2), and `trusty-mpm` (2);
 > (v) N2 recorded with its observed exit code and stderr;
 > (vi) a total wall clock, logged, which is recorded in the MANIFEST as the
 > **first full-stack measurement**.
+
+> **CORRECTED 2026-08-03 — clause (iii), by owner decision. The previous text is
+> not restored, and this note is why.** Phase 5 ran this checkpoint twice on real
+> guests and clause (iii) could not be met, for reasons that were **in the
+> checkpoint rather than in the harness or the product** (MANIFEST Phase 5,
+> Deviations item 1).
+>
+> It previously required all **8** `tsv_scope_packages` values — "**including
+> `trusty-mpm`**" — to satisfy `health ∈ {healthy, stale}`. Three of the eight are
+> **not daemon members and are structurally absent from `stack doctor`'s output**
+> (`doctor.rs:151` filters `stable_set()` to `m.daemon`), so no run of any pattern
+> could ever satisfy it; and the "including `trusty-mpm`" emphasis named **the one
+> member the product guarantees will fail the predicate** — `#4246` reports it
+> `unknown` by deliberate design. That emphasis was **not in DOC-2**; it entered
+> through this plan's own D2/D3 reversal, and it is **removed**, because a
+> checkpoint must not single out the member it is least able to assert. DOC-2
+> **§1.1a** now scopes the predicate and clause (iii) above tracks it.
+>
+> **This does not weaken an assertion the scenario can actually make.** All 13
+> in-scope binaries are still asserted present, all 4 Single-Install gates still
+> run, and `on_path`/`version` are still asserted for every member `doctor`
+> reports. **Nothing under `crates/` was changed** — the harness adapts to the
+> product, never the reverse.
 
 ### P5-T1 — `install_from_path` and the per-build-step `rustc` assertion
 

@@ -91,16 +91,113 @@ in-scope members of `expected-binaries.tsv` (§9):
 
 ```
 PASS  iff  for every in-scope package p:
-             if expect_P(p) == present  then  member(p).health   ∈ {healthy, stale}
+             if expect_P(p) == present  then  member(p).health   ∈ H_P(p)
                                         and   member(p).on_path  == true
                                         and   member(p).version  != null
              if expect_P(p) == absent   then  member(p).health   == "not_installed"
                                         and   member(p).on_path  == false
+
+           where every clause above is quantified over
+             health_scope := tsv_scope_packages ∩ { m.member : m ∈ report.members }
+           and H_P(p), the accepted health set for p under pattern P, is
+
+             H_P(p) := {healthy, stale}
+                     ∪ {unknown}  if member(p).plist_installed == null
+                     ∪ {down}     if P ∈ {b, c} and member(p).plist_installed == false
 ```
+
+#### 1.1a Health is quantified over doctor's daemon-member set, not over the TSV
+
+*(Amended 2026-08-03 — owner decision. Supersedes the two bullets that follow it
+wherever they disagree.)*
+
+**The predicate above was unsatisfiable for a source-installed stack, and Phase 5
+proved it on a real guest with every one of the eight in-scope packages failing —
+not one of them because installation had failed.** `verify_binaries` had just
+resolved all 13 binaries and `doctor` itself reported `on_path=true` and a real
+`version` for every member it carries. A predicate that fails on a stack it agrees
+is correctly installed is testing the wrong thing. **The oracle stops asserting
+what the scenario structurally cannot produce.** Three confirmed causes, each
+narrowing the predicate in exactly one way:
+
+**(a) `stack doctor` does not enumerate `tsv_scope_packages`, so health is
+quantified over the members it actually reports.** `commands/stack/doctor.rs:151`
+resolves its member set as `stable_set()` **filtered to `m.daemon`** — a different
+set from the TSV's in-scope packages. **`trusty-code`, `trusty-installer` and
+`tga` are structurally absent from doctor's output** and can never satisfy a
+predicate quantified over `member(p)`. They are not exempted from verification:
+their **presence is asserted by `verify_binaries`** (all 13 in-scope binaries,
+including `tcode`, `trusty-installer`, `tctl` and `tga`) **and by
+`verify_single_install`** for the multi-binary ones, both of which are unaffected
+by this amendment and both of which are stronger evidence of a correct install
+than a daemon health field a non-daemon package does not have. §F-10(e) resolved
+the *opposite* direction — a doctor member the TSV does not carry is logged, not
+asserted, which is why `trusty-console` correctly does not fail a run. This is
+that rule's missing counterpart.
+
+**(b) `unknown` is accepted for members the product deliberately declines to
+probe.** `probe_member_health` (`commands/probe.rs:141-158`) returns
+`ProbeOutcome::Unprobeable` for `ManageStrategy::OwnVerb`, and
+`probe_http.rs:211` maps `Unprobeable` to `unknown`. The source comment is
+explicit that this is a decision, not a gap:
+
+> `#4246`: trusty-mpm (`OwnVerb`) is DELIBERATELY left unprobed and reported
+> `unknown`, even though it does answer `/health` on 7880. […] probing it would
+> flip `tctl status` to exit 2 and `tctl install` to NOT VERIFIED for every user
+> who simply has not started mpm. Enabling it is a separate, user-visible policy
+> change, tracked separately.
+
+Rejecting `unknown` therefore asserts against a documented product decision.
+**The condition is written as `plist_installed == null`, not as a member name.**
+`null` means "not a launchd member" (§1.1's own field table) which is exactly the
+`OwnVerb`/`None` set that `probe_member_health` returns `Unprobeable` for, so the
+acceptance is **derived from the JSON** and follows the product automatically if
+another member ever changes strategy. Naming `trusty-mpm` in the predicate would
+hardcode today's `stable_set` into the oracle.
+
+**(c) `down` is accepted under the source-install patterns (b) and (c) when
+`plist_installed == false`.** A launchd member reports `down` because it has no
+plist, and a plist is written by a member's `service install` step — reached from
+`tctl install`'s service-bootstrap step (`install.rs:528`,
+`plans_service_bootstrap`), which **DOC-1 §6.5 bans from patterns (b) and (c)**.
+Nothing else in a source-based scenario bootstraps one before the oracle reads
+`doctor`. So `down` under `plist_installed == false` is the *expected* state of a
+correctly source-installed stack, not a packaging defect. `plist_installed` is
+required to be `false` for this acceptance: a launchd member that **does** have a
+plist and is still `down` is a real failure and still fails.
+
+**The `stale` justification below was wrong, and is corrected here rather than
+deleted.** It reads "on a freshly installed VM where daemons have just been
+bootstrapped, a stale heartbeat is expected timing". **Pattern (c) cannot reach
+that state at all** — by (c) above, nothing in a source-based scenario bootstraps
+a daemon, so there is no just-bootstrapped heartbeat to be stale. The sentence
+described pattern (a)'s world and was applied to all three. `stale` remains
+accepted (it is still not evidence of a packaging failure), but its stated reason
+holds only where a bootstrap actually happens.
+
+**What this does NOT narrow, stated so a future reader does not over-read it:**
+`on_path == true` and `version != null` are still asserted for **every** in-scope
+member doctor reports; all **13** in-scope binaries are still asserted present by
+`verify_binaries`; all **4** Single-Install gates still run; §1.3's RC-1
+liveness-only rule is untouched. The narrowing is to **daemon health**, and to
+nothing else.
+
+**Pattern (a) may legitimately assert more strictly, and Phase 7 should consider
+it.** Under (a) the harness is permitted `tctl install`, whose service-bootstrap
+step *does* write plists, so `plist_installed == true` and a real `healthy` or
+`stale` are reachable — cause (c) does not apply there, and the `H_P` term above
+is already pattern-gated to `{b, c}` so that (a) inherits the strict form. Causes
+(a) and (b) are structural and apply under every pattern. **This is recorded for
+Phase 7, not implemented now**; asserting it before a pattern-(a) run has ever
+been observed would be inventing a contract, which is what this amendment exists
+to stop doing.
 
 Two deliberate choices, both judgment calls with no measurement behind them:
 
-- **`stale` is accepted, `down` is not.** `stale` describes a daemon whose
+- **`stale` is accepted, `down` is not.** *(Scoped by §1.1a, 2026-08-03: `down`
+  IS accepted under patterns (b)/(c) when `plist_installed == false`, and the
+  justification in this bullet describes a state those patterns cannot reach.)*
+  `stale` describes a daemon whose
   heartbeat is old; on a freshly installed VM where daemons have just been
   bootstrapped, a stale heartbeat is expected timing, not a packaging defect. The
   harness's claim is that *installation* succeeded (DOC-1 Purpose), and a stale

@@ -531,14 +531,90 @@ _verify_package_expectation() {
 }
 
 # verify_stack_doctor <vm_name> <pattern>
-# §1.1's per-member predicate. 0, or dies 60.
+# §1.1's per-member predicate, AS AMENDED 2026-08-03 (§1.1a). 0, or dies 60.
 #
 # DO NOT REACH FOR `tctl stack health --json` BECAUSE THE NAME READS BETTER
 # (§1.1): it has a narrower shape and a DIFFERENT verdict vocabulary
 # (`ready` | `degraded` versus doctor's `ok` | `degraded`).
+#
+# ===========================================================================
+# SCOPING STATEMENT — WHY DAEMON HEALTH IS QUANTIFIED OVER DOCTOR'S OWN MEMBER
+# SET AND NOT OVER `tsv_scope_packages` (DOC-2 §1.1a, owner decision 2026-08-03).
+#
+# THE ORIGINAL PREDICATE WAS UNSATISFIABLE FOR A SOURCE-INSTALLED STACK. Phase 5
+# ran it twice on real guests: ALL EIGHT in-scope packages failed, and NOT ONE of
+# them because installation had failed — `verify_binaries` had just resolved all
+# 13 binaries and doctor itself reported `on_path=true` and a real `version` for
+# every member it carries. The oracle now stops asserting what the scenario
+# STRUCTURALLY CANNOT PRODUCE. Three causes, each narrowing exactly one thing:
+#
+#   (a) DOCTOR DOES NOT ENUMERATE `tsv_scope_packages`. `commands/stack/
+#       doctor.rs:151` resolves `stable_set()` FILTERED TO `m.daemon`. So
+#       `trusty-code`, `trusty-installer` and `tga` are STRUCTURALLY ABSENT and
+#       can never satisfy a predicate quantified over `member(p)`. THEY ARE NOT
+#       EXEMPT FROM VERIFICATION: `verify_binaries` asserts all 13 in-scope
+#       binaries present (including `tcode`, `trusty-installer`, `tctl`, `tga`)
+#       and `verify_single_install` gates the multi-binary ones. Both are
+#       UNAFFECTED by this scoping and both are stronger evidence of a correct
+#       install than a health field a non-daemon package does not have.
+#       §F-10(e) resolved the OPPOSITE direction (a doctor member the TSV does
+#       not carry -> logged, not asserted); this is its missing counterpart.
+#
+#   (b) `unknown` IS ACCEPTED FOR A MEMBER THE PRODUCT DECLINES TO PROBE.
+#       `probe_member_health` (commands/probe.rs:141-158) returns
+#       `ProbeOutcome::Unprobeable` for `ManageStrategy::OwnVerb`, which
+#       `probe_http.rs:211` maps to `unknown`. The source comment is explicit
+#       that this is a DECISION, not a gap — #4246: "trusty-mpm (`OwnVerb`) is
+#       DELIBERATELY left unprobed and reported `unknown`, even though it does
+#       answer /health on 7880 […] Enabling it is a separate, user-visible
+#       policy change, tracked separately." Rejecting `unknown` asserts against
+#       a documented product decision.
+#
+#       THE CONDITION IS `plist_installed == null`, NOT A MEMBER NAME. `null`
+#       means "not a launchd member" (§1.1's field table) — exactly the
+#       `OwnVerb`/`None` set `probe_member_health` returns `Unprobeable` for. So
+#       the acceptance is DERIVED FROM THE JSON and follows the product by
+#       itself if another member ever changes strategy. Hardcoding `trusty-mpm`
+#       here would freeze today's `stable_set` into the oracle.
+#
+#   (c) `down` IS ACCEPTED UNDER SOURCE-INSTALL PATTERNS (b)/(c) WHEN
+#       `plist_installed == false`. A launchd member is `down` because it has no
+#       plist, and a plist is written by the member's `service install` step,
+#       reached from `tctl install`'s service-bootstrap step (install.rs:528,
+#       `plans_service_bootstrap`) — WHICH DOC-1 §6.5 BANS FROM PATTERNS (b)/(c).
+#       Nothing else bootstraps one before the oracle reads doctor. `down` with
+#       no plist is therefore the EXPECTED state of a correctly source-installed
+#       stack. `plist_installed == false` IS REQUIRED for the acceptance: a
+#       launchd member that DOES have a plist and is still `down` is a real
+#       failure and STILL FAILS.
+#
+# §1.1'S `stale` JUSTIFICATION WAS WRONG AND IS CORRECTED AT SOURCE, NOT DELETED.
+# It reads "on a freshly installed VM where daemons have just been bootstrapped,
+# a stale heartbeat is expected timing". PATTERN (c) CANNOT REACH THAT STATE — by
+# (c) above nothing in a source-based scenario bootstraps a daemon, so there is no
+# just-bootstrapped heartbeat to be stale. It described pattern (a)'s world.
+#
+# WHAT THIS DOES NOT NARROW, so nobody over-reads it: `on_path == true` and
+# `version != null` are STILL ASSERTED for every in-scope member doctor reports;
+# all 13 binaries are still asserted present; all 4 Single-Install gates still
+# run; §1.3's RC-1 liveness-only rule is untouched. DAEMON HEALTH, and nothing
+# else, is what narrowed.
+#
+# PATTERN (a) MAY ASSERT MORE STRICTLY AND PHASE 7 SHOULD CONSIDER IT. Under (a)
+# `tctl install` is permitted and its service step DOES write plists, so
+# `plist_installed == true` and a real `healthy`/`stale` are reachable — cause (c)
+# does not apply there, which is why the `down` acceptance below is GATED ON
+# PATTERN b|c and (a) inherits the strict form automatically. Causes (a) and (b)
+# are structural and apply under every pattern. NOT IMPLEMENTED HERE: asserting
+# it before a pattern-(a) run has ever been observed would invent a contract,
+# which is the thing this amendment exists to stop doing.
+#
+# THE HARNESS ADAPTS TO THE PRODUCT, NEVER THE REVERSE: nothing under `crates/`
+# was changed to reach this predicate.
+# ===========================================================================
 verify_stack_doctor() {
     local vm="$1" pattern="$2"
-    local json verdict pkg expect health on_path version bad extra n
+    local json verdict pkg expect health on_path version plist accepted bad extra n unreported
 
     log "--- verify_stack_doctor (pattern ${pattern}; DOC-2 §1.1, §12.2) ---"
 
@@ -568,34 +644,60 @@ verify_stack_doctor() {
         log "stack doctor reports member(s) the expectation table does not carry: $(printf '%s' "$extra" | tr '\n' ' ')  [LOGGED, NOT ASSERTED — plan §F-10(e)]"
     fi
 
-    bad=''; n=0
+    bad=''; n=0; unreported=''
     while read -r pkg; do
         [ -n "$pkg" ] || continue
-        n=$(( n + 1 ))
         expect=$(_verify_package_expectation "$pkg" "$pattern")
 
+        # §1.1a(a): HEALTH IS QUANTIFIED OVER `health_scope`, i.e. the in-scope
+        # packages doctor ACTUALLY REPORTS. Doctor's member set is `stable_set()`
+        # filtered to `m.daemon` (doctor.rs:151), so a non-daemon in-scope package
+        # is STRUCTURALLY ABSENT and carries NO HEALTH OBLIGATION. It is NOT
+        # skipped silently and it is NOT unverified: `verify_binaries` has already
+        # asserted its binaries present and `verify_single_install` gates it if it
+        # is multi-binary. Named in the log every run so the scoping is visible.
         if ! printf '%s' "$json" | jq -e --arg m "$pkg" 'any(.members[]; .member == $m)' >/dev/null 2>&1; then
-            bad="${bad}
-    ${pkg}: expected ${expect}, but \`stack doctor\` REPORTS NO MEMBER BY THAT NAME"
+            unreported="${unreported} ${pkg}"
             continue
         fi
+        n=$(( n + 1 ))
 
         health=$(printf '%s' "$json"  | jq -r --arg m "$pkg" '.members[] | select(.member == $m) | .health')
         on_path=$(printf '%s' "$json" | jq -r --arg m "$pkg" '.members[] | select(.member == $m) | .on_path')
         version=$(printf '%s' "$json" | jq -r --arg m "$pkg" '.members[] | select(.member == $m) | .version')
+        plist=$(printf '%s' "$json"   | jq -r --arg m "$pkg" '.members[] | select(.member == $m) | .plist_installed')
 
         case "$expect" in
             present)
-                # `stale` IS accepted, `down` is NOT (§1.1, a labelled judgment
-                # call). On a freshly installed VM where daemons have just been
-                # bootstrapped, a stale heartbeat is expected timing, not a
-                # packaging defect; the harness's claim is that INSTALLATION
-                # succeeded. `down` and `unknown` do refute that.
-                case "$health" in
-                    healthy|stale) ;;
+                # H_P(p) — the accepted health set, DERIVED FROM THE JSON, never
+                # from a member name (§1.1a). Base {healthy, stale}; plus
+                # `unknown` when `plist_installed == null` (a non-launchd member,
+                # which is exactly the OwnVerb/None set `probe_member_health`
+                # returns `Unprobeable` for, #4246); plus `down` when
+                # `plist_installed == false` under the source-install patterns,
+                # where DOC-1 §6.5 bans the only step that writes a plist.
+                accepted='healthy stale'
+                if [ "$plist" = 'null' ]; then
+                    accepted="${accepted} unknown"
+                fi
+                # An explicit `if`, NOT `[ … ] && accepted=…`: a bare AND-list
+                # whose left side fails is the `set -e` gotcha the driver warns
+                # about at its own head, and this one would fire on every
+                # non-launchd member.
+                if [ "$plist" = 'false' ]; then
+                    case "$pattern" in
+                        b|c) accepted="${accepted} down" ;;
+                    esac
+                fi
+
+                case " ${accepted} " in
+                    *" ${health} "*)
+                        log "  ${pkg}: health='${health}' accepted (plist_installed=${plist}; H_${pattern} = {$(printf '%s' "$accepted" | tr ' ' ',')})" ;;
                     *) bad="${bad}
-    ${pkg}: health='${health}', expected one of {healthy, stale} (§1.1 accepts stale, rejects down and unknown)" ;;
+    ${pkg}: health='${health}', expected one of {$(printf '%s' "$accepted" | tr ' ' ',')} for plist_installed=${plist} under pattern ${pattern} (DOC-2 §1.1a)" ;;
                 esac
+
+                # UNCHANGED AND STILL ASSERTED for every member doctor reports.
                 [ "$on_path" = 'true' ] || bad="${bad}
     ${pkg}: on_path=${on_path}, expected true"
                 # `None` serialises as `null`, NOT as an absent key (§1.1: no
@@ -615,10 +717,14 @@ verify_stack_doctor() {
 $(tsv_scope_packages)
 EOF
 
-    [ -z "$bad" ] \
-        || die 60 "verify_stack_doctor FAILED under pattern ${pattern} — §1.1's per-member predicate does not hold for the following of the ${n} in-scope packages:${bad}"
+    if [ -n "$unreported" ]; then
+        log "in-scope package(s) \`stack doctor\` does not report as members:${unreported}  [NO HEALTH OBLIGATION — DOC-2 §1.1a(a): doctor iterates stable_set() filtered to daemon members. Their presence is asserted by verify_binaries and verify_single_install.]"
+    fi
 
-    log "verify_stack_doctor PASS: all ${n} in-scope packages satisfy §1.1's predicate (verdict '${verdict}' logged but not asserted)"
+    [ -z "$bad" ] \
+        || die 60 "verify_stack_doctor FAILED under pattern ${pattern} — §1.1's per-member predicate (as amended 2026-08-03, §1.1a) does not hold for the following of the ${n} in-scope packages doctor reports:${bad}"
+
+    log "verify_stack_doctor PASS: all ${n} in-scope package(s) reported by doctor satisfy §1.1a's predicate under pattern ${pattern} (verdict '${verdict}' logged but not asserted)"
 }
 
 # verify_versions <vm_name> <pattern>
