@@ -254,9 +254,19 @@ rather than an oversight:
 - **`install.sh` is entirely out of scope**, by decision. The harness makes **no
   claim whatsoever** about that user path, and never has.
 - **`--dir` mounts were never measured**, in either direction. See rule 2 above.
-- **`trusty-analyze` is missing from the design's daemon table** — logged as a gap
-  on every single run since Phase 3. The oracle probes it anyway (it is in the
-  in-scope crate set); it is the *documentation* that is short a row.
+- **`trusty-analyze` is a daemon the oracle does NOT probe.** It is in the in-scope
+  crate set and `stable_set` marks it a daemon, but the design's daemon table does
+  not enumerate it, so the harness has no described `/health` shape for it and
+  **skips it**. Every run prints this by name:
+
+  ```
+  NOTE: trusty-analyze is in scope and is a daemon in stable_set, but §1.3 does not
+  enumerate it — NOT probed here. Recorded as a §1.3 gap.
+  ```
+
+  So `verify_daemon_liveness PASS: 4 in-scope daemon(s) live` means **four of five**.
+  Its *binaries* are still asserted present by `verify_binaries`; it is only the
+  health probe that skips it.
 - **One host, one user, one terminal.** Every timing figure and every TCC
   observation in this doc set came from one machine, run from iTerm2, by one user.
   Treat the numbers as this machine's, not as the harness's.
