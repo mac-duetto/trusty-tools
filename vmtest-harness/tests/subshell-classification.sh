@@ -214,6 +214,48 @@ else
     sed 's/^/       | /' "$WORK/measure.err"
 fi
 
+printf -- '--- §2 abort contract: a signal exits with ITS code, not the classification ---\n'
+
+# REGRESSION GUARD, and it caught a real one.  While fixing #16 the EXIT trap was
+# briefly changed to `exit "${VMTEST_EXIT:-$rc}"` so that a swallowed failure
+# could not exit 0.  `on_int` exits 130, which FIRES the EXIT trap — so with a
+# classification already recorded, a SIGINT exited 50 instead of 130, silently
+# repealing §2's user-abort rows and the driver's own "the literal `exit` codes
+# stay unconditional" comment.  The classification and the OS-level abort code
+# are separate things (§2), and this asserts they stay separate.
+check_signal() {
+    local label="$1" signal="$2" expected="$3" got
+    {
+        cat <<PREAMBLE
+#!/usr/bin/env bash
+. "$HARNESS" --source-only
+PREAMBLE
+        cat <<BODY
+# A failure is already classified when the signal arrives.
+VMTEST_EXIT=50
+kill -$signal \$\$
+sleep 5
+printf 'SIGNAL HANDLER DID NOT TERMINATE THE SHELL\n' >&2
+exit 111
+BODY
+    } > "$WORK/signal.sh"
+
+    bash "$WORK/signal.sh" >/dev/null 2>"$WORK/signal.err"
+    got=$?
+    if [ "$got" -eq "$expected" ]; then
+        PASSES=$(( PASSES + 1 ))
+        printf 'ok   %-46s exit=%s (classification 50 preserved for MEASURE)\n' "$label" "$got"
+    else
+        FAILURES=$(( FAILURES + 1 ))
+        printf 'FAIL %-46s expected exit=%s, got %s\n' "$label" "$expected" "$got"
+        printf '       the EXIT trap overrode the signal handler with the classification\n'
+        sed 's/^/       | /' "$WORK/signal.err"
+    fi
+}
+
+check_signal 'SIGINT with VMTEST_EXIT=50 still exits 130' INT 130
+check_signal 'SIGTERM with VMTEST_EXIT=50 still exits 143' TERM 143
+
 printf -- '---\n'
 printf '%d passed, %d failed\n' "$PASSES" "$FAILURES"
 [ "$FAILURES" -eq 0 ] || exit 1

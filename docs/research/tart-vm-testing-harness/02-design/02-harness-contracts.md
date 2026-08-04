@@ -2539,8 +2539,11 @@ die() {
   _code=$1; shift
   printf 'vmtest: FAIL[%s]: %s\n' "$_code" "$*" >&2
   # The slot is file-backed: a shell global cannot cross a fork, a file can.
+  # Write first, then ADOPT — so a `die` in this shell loses to an earlier one
+  # that was recorded in a child, which is what makes the file authoritative.
   if [ -n "${VMTEST_TMPDIR:-}" ]; then
     ( set -o noclobber; printf '%s\n' "$_code" > "$VMTEST_TMPDIR/exit-code" ) 2>/dev/null || :
+    _reconcile_exit_from_side_channel
   fi
   if [ -z "${VMTEST_EXIT:-}" ]; then VMTEST_EXIT=$_code; fi
   exit "$VMTEST_EXIT"
@@ -2568,6 +2571,16 @@ die() {
 > `VMTEST_TMPDIR` exists from `conf_load` onward, i.e. before every affected
 > site; the guard covers the `die 2` / `die 10` paths that precede it, which fire
 > in the parent where the global already worked.
+>
+> **The write is immediately followed by a READ-BACK, and the two together are
+> the mechanism — neither alone is sufficient.** `die` tested only the in-shell
+> global, so a second, parent-side `die` still claimed a slot the first failure
+> already held on disk: a subshell `die 50` followed by a `die 70` left the file
+> holding 50 and exited **70**, which is the override this document forbids,
+> reached by a longer route. Adopting the file inside `die` is what makes the
+> `O_EXCL` create *decide* the verdict rather than merely record it — and it is
+> what makes the claim above about backgrounded children true rather than
+> aspirational.
 >
 > **The side channel is a backstop, not the whole fix.** It restores
 > classification everywhere, but it cannot restore an *abort* at the three

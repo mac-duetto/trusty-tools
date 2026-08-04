@@ -116,7 +116,10 @@ source_deliver_local() {
 # --- pattern (b): a branch of the public repo (DOC-1 §6.2) -----------------
 
 # source_deliver_branch <vm_name> <repo_url> <branch> <guest_dir>
-# EMITS the resolved commit SHA on stdout. 0, or dies 50.
+# 0, or dies 50 — §12.2's declared signature, with NO stdout emit. The resolved
+# commit SHA is LOGGED to stderr like every other diagnostic (§12.1); it was
+# emitted on stdout until 2026-08-04, which put all ten `die 50` calls inside the
+# caller's command substitution and classified none of them (#16).
 #
 # ============================================================================
 # NO HOST->GUEST BYTE STREAM EXISTS ON THIS PATH, AND THAT IS THE POINT.
@@ -383,7 +386,7 @@ install_from_path() {
     # a later teardown `die 70` could claim the slot §2 reserves for the first
     # classified failure. The resolved line comes back in RUSTC_LAST_LINE.
     verify_rustc "$vm" "$crate_path" "$expected"
-    rustc_line="$RUSTC_LAST_LINE"
+    rustc_line="${RUSTC_LAST_LINE:-}"
 
     if [ -z "$expected" ]; then
         case "$rustc_line" in
@@ -526,7 +529,9 @@ install_from_registry() {
     guest_home=$(conf_get guest_home)
     workspace_rustc=$(tsv_get "$VMTEST_RUNDIR/toolchain.tsv" rustc_version) \
         || die 50 "no rustc_version in $VMTEST_RUNDIR/toolchain.tsv (DOC-2 §7.1) — cannot form DOC-1 §8.4's expectation for '${pkg}'"
-    verify_rustc "$vm" "$guest_home" "$workspace_rustc" >/dev/null
+    # #16: no `>/dev/null` — this function no longer writes to stdout, and the
+    # redirection was suppressing nothing.
+    verify_rustc "$vm" "$guest_home" "$workspace_rustc"
 
     # §12.2's optional third argument. Unused by today's scenario — every package
     # installs at its published maximum — but it is the signature the contract
@@ -571,7 +576,7 @@ install_from_registry() {
 
 # install_assert_install_count [<accessor>]
 # P5-T8's run-level tripwire: the install loop must have run EXACTLY ONCE per
-# value the accessor emits. 0, or dies 60.
+# value the accessor WRITES TO ITS OUT_PATH. 0, or dies 60.
 #
 # THE ACCESSOR ARGUMENT IS PHASE 7'S ONE ADDITION, and it is what keeps ONE
 # tripwire covering all three patterns. Patterns (b)/(c) install by DIRECTORY

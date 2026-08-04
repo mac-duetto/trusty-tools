@@ -153,12 +153,22 @@ PIN_KEYS='oci_ref digest local_name pinned_on pinned_by note enforcement'
 # single-threaded — it holds even against `run_watchdog`'s backgrounded
 # children.  The option is set INSIDE `( … )` so the driver's own shell options
 # are untouched.
+#
+# THE WRITE IS FOLLOWED BY A READ-BACK, and without it the file would be
+# write-once without being AUTHORITATIVE.  `die` tested only the in-shell global,
+# so a second, parent-side `die` still claimed a slot the first failure already
+# held on disk: a subshell `die 50` then a `die 70` left the file holding 50 and
+# exited 70 — §2's override, by a longer route.  Adopting the file here is what
+# makes the O_EXCL create decide the verdict, rather than merely record it.
 die() {
   _code=$1; shift
   printf 'vmtest: FAIL[%s]: %s\n' "$_code" "$*" >&2
-  # #16: classify through a file, because a global cannot cross a fork.
+  # The slot is file-backed: a shell global cannot cross a fork, a file can.
+  # Write first, then ADOPT — so a `die` in this shell loses to an earlier one
+  # that was recorded in a child, which is what makes the file authoritative.
   if [ -n "${VMTEST_TMPDIR:-}" ]; then
     ( set -o noclobber; printf '%s\n' "$_code" > "$VMTEST_TMPDIR/exit-code" ) 2>/dev/null || :
+    _reconcile_exit_from_side_channel
   fi
   if [ -z "${VMTEST_EXIT:-}" ]; then VMTEST_EXIT=$_code; fi
   exit "$VMTEST_EXIT"
@@ -634,12 +644,19 @@ vmtest_cleanup() {
 # must not take the slot from it.
 #
 # #16: the rc is PASSED to cleanup rather than left for it to sample, restoring
-# §Shell discipline's cleanup property 1 (see `vmtest_cleanup`'s own note), and
-# the process exits with the CLASSIFICATION when there is one — §12.4's chain
-# ends "the process exits with VMTEST_EXIT", which a swallowed subshell failure
-# used to break by leaving `rc` at 0.
+# §Shell discipline's cleanup property 1 (see `vmtest_cleanup`'s own note).
+#
+# `on_exit` STILL EXITS WITH `$rc`, NOT WITH VMTEST_EXIT, and that is deliberate.
+# An `exit "${VMTEST_EXIT:-$rc}"` here was tried and reverted: `on_int` exits 130,
+# which fires this trap, so the override made a SIGINT during an already-
+# classified failure exit 50 instead of 130 — silently repealing the paragraph
+# directly above and §2's user-abort rows.  The case that motivated it (rc 0 while
+# VMTEST_EXIT is set) needs a construct that discards a die-capable function's
+# status; Part 2 removed all of them and `tests/check-no-swallowed-die.sh` fails
+# the build if one returns.  A gate that goes red before the code ships is a
+# stronger guarantee than a runtime override that costs the abort contract.
 _abort_classify() { [ -n "${VMTEST_EXIT:-}" ] || VMTEST_EXIT=$1; }
-on_exit() { local rc=$?; vmtest_cleanup "$rc"; exit "${VMTEST_EXIT:-$rc}"; }
+on_exit() { local rc=$?; vmtest_cleanup "$rc"; exit "$rc"; }
 on_int()  { log 'SIGINT — tearing down';  _reconcile_exit_from_side_channel; _abort_classify 130; vmtest_cleanup 130; exit 130; }
 on_term() { log 'SIGTERM — tearing down'; _reconcile_exit_from_side_channel; _abort_classify 143; vmtest_cleanup 143; exit 143; }
 

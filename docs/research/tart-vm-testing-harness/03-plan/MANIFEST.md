@@ -4387,10 +4387,23 @@ detected before. See Phase 7 Deviations items 1 and 2.
      **The correction restores property 1 rather than working around it:** the
      captured rc is now PASSED to cleanup (`vmtest_cleanup "$rc"`, read as
      `_cleanup_rc="${1:-$?}"` so a bare call still satisfies property 1), and the
-     signal handlers pass their codes the same way. `on_exit` additionally exits
-     with `${VMTEST_EXIT:-$rc}`, which is what §12.4's chain already said the
-     process does. Covered by `vmtest-harness/tests/subshell-classification.sh`,
-     which asserts the MEASURE line reports the rc it was handed.
+     signal handlers pass their codes the same way. Covered by
+     `vmtest-harness/tests/subshell-classification.sh`, which asserts the MEASURE
+     line reports the rc it was handed.
+
+     > **`on_exit` still exits with `$rc`, NOT with `VMTEST_EXIT` — tried,
+     > proven harmful, reverted.** An `exit "${VMTEST_EXIT:-$rc}"` was written
+     > first, to stop a swallowed failure exiting 0. It silently repealed §2's
+     > user-abort rows: `on_int` exits 130, which **fires the EXIT trap**, so a
+     > SIGINT arriving after a classified failure exited **50** instead of 130 —
+     > contradicting §Shell discipline and the driver's own "the literal `exit`
+     > codes stay unconditional" comment, neither of which had been amended. The
+     > case that motivated the override needs a construct that discards a
+     > die-capable function's status; Phase-8-post's Part 2 removed all of them
+     > and `tests/check-no-swallowed-die.sh` fails the build if one returns. A
+     > gate that goes red before the code ships is a stronger guarantee than a
+     > runtime override that costs the abort contract. The two signal codes are
+     > now regression-tested directly.
 - **Tasks:** P8-T1 … P8-T6 complete
 
 ---

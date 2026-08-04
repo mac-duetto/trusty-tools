@@ -361,8 +361,9 @@ negative_probe_n2() {
 
 # verify_rustc <vm_name> <crate_abs_dir> <expected>
 # DOC-1 §8.4's per-build-step assertion. Called from `install_from_path`
-# immediately before the build. 0, or dies 50. EMITS the `rustc --version` line
-# on stdout (§12.1's single-value channel); diagnostics go to stderr.
+# immediately before the build. 0, or dies 50 — §12.2's declared signature, with
+# NO stdout emit. Diagnostics go to stderr; the resolved `rustc --version` line
+# is handed back in the global RUSTC_LAST_LINE (#16).
 #
 # An EMPTY <expected> means "assert that rustc resolves here and reports a
 # version, do not assert WHICH" — the caller uses it for a crate that declares

@@ -167,6 +167,12 @@ awk '
 # this logical line balance — an unbalanced line is left intact rather than
 # mangled, on the principle that a false positive beats a missed defect.
 function dequote(l,   out, i, c, inq, n) {
+    # Drop every backslash-escape pair FIRST.  Two reasons, both load-bearing:
+    # the `'"'"'\'"'"''"'"'` idiom otherwise makes the quote count odd and defeats the
+    # balance test below, and an escaped `` \` `` inside a diagnostic is a
+    # literal, not a substitution — deleting it is what keeps the backtick ban
+    # from firing on every `die` message in the harness.
+    gsub(/\\./, "", l)
     n = gsub(/'"'"'/, "'"'"'", l)
     if (n % 2 != 0) return l
     out = ""; inq = 0
@@ -207,6 +213,22 @@ function report(f, ln, kind, name, text) {
 function scan(f, ln, raw, inhd,   line, i, c, pre, nm, isfor, j, s) {
     line = strip(raw)
     if (line == "") return
+    # BACKTICKS ARE BANNED OUTRIGHT in this harness, and the ban is a #16
+    # control rather than a style rule.  `` `f` `` is a command substitution
+    # exactly as `$(f)` is, so `` for x in `tsv_scope_packages` `` reintroduces
+    # the whole pre-fix defect — and NOTHING would catch it: the scan below
+    # matches `$(` and `<(` only, and shellcheck SC2006 is severity `style`,
+    # below the `-S error` this repo pins.  Banning beats scanning because
+    # backticks do not nest and cannot be parsed with the paren-balancing the
+    # rest of this check relies on.  There are zero backticks to convert: every
+    # one in the harness today is a BACKSLASH-ESCAPED literal inside a
+    # double-quoted diagnostic, which this test does not match.
+    if (line ~ /(^|[^\\])`/) {
+        printf "%s:%d: [backtick-substitution] backticks are banned in this harness; use $( ).\n", f, ln
+        printf "       %s\n", line
+        printf "       A backtick hides a subshell from this check AND from shellcheck -S error (SC2006 is `style`).\n"
+        bad++
+    }
     isfor = (line ~ /^[ \t]*for[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]+in[ \t]/)
     for (i = 1; i < length(line); i++) {
         c = substr(line, i, 2)
