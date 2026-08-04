@@ -275,6 +275,38 @@ bootstrap step — and neither causes the other.
 > **LIVE — HTTP 200** by `verify_daemon_liveness` a few steps later in the same
 > run. That transition is this correction's mechanism demonstrated end to end:
 > **what changes `health` is the start, not a plist.**
+>
+> > **REFINED 2026-08-04 BY READING `tctl start --json`'s ACTUAL OUTPUT — the
+> > last sentence is true but its implication is not, and the difference makes
+> > the ordering qualifier load-bearing for a SECOND assertion.** `tctl start`
+> > does not merely start; it reaches a **service-install** path and **writes the
+> > plists**. Observed verbatim in the pattern (c) run of 2026-08-04:
+> >
+> > ```
+> > { "member": "trusty-search",  "ok": true, "detail": "installed + bootstrapped com.trusty.trusty-search" }
+> > { "member": "trusty-memory",  "ok": true, "detail": "installed + bootstrapped com.trusty.memory" }
+> > { "member": "trusty-analyze", "ok": true, "detail": "installed + bootstrapped com.trusty.analyze" }
+> > { "member": "trusty-review",  "ok": true, "detail": "installed + bootstrapped com.trusty.trusty-review" }
+> > { "member": "trusty-mpm",     "ok": true, "detail": "trusty-mpm start ok" }
+> > ```
+> >
+> > It remains correct that a plist does not *cause* `health` to change — the
+> > daemon running is what does. But it is **not** correct to picture the plists
+> > as still absent afterwards. **They are written, by the harness's own liveness
+> > step.**
+> >
+> > **CONSEQUENCE — §1.1a Decision 2's plist invariant is ORDERING-DEPENDENT, and
+> > nothing enforces the ordering.** Since 2026-08-04 `verify_stack_doctor`
+> > asserts `plist_installed == false` **directly** for every in-scope launchd
+> > member. That assertion holds only because `verify_stack_doctor` runs
+> > **before** `verify_daemon_liveness` in all three scenarios. **Reorder those
+> > two calls and the plist invariant fails on every run** — not because anything
+> > regressed, but because the harness itself bootstrapped the services one step
+> > earlier. This is recorded rather than fixed: the ordering is correct today in
+> > all three scenarios (`install-local.sh:93,95`, `install-branch.sh:131,133`,
+> > `install-released.sh:114,116`), and inventing a guard for a hazard no
+> > scenario currently exhibits would add a mechanism nobody has needed. **A
+> > future editor moving these calls must read this note first.**
 
 **Consequence 1 — the fail-closed branch this bullet promises is INERT under the
 very patterns it is gated to.** The original text justified requiring

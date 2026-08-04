@@ -260,7 +260,31 @@ green run means.** Anyone using this harness needs all six.
    `upgrade.rs:502` and `self_update.rs:295`. **No substance changed** — RC-2 is
    still closed-as-unreachable and N2 still reports `BLOCKED`.
 
-> **Items 3, 7 and 8 are FOLLOW-UP WORK, not a ninth phase.** The plan closed at
+9. **`tctl start --json` WRITES THE PLISTS, and that makes §1.1a Decision 2's
+   plist invariant ORDERING-DEPENDENT. Recorded 2026-08-04, not fixed.** The
+   harness's own `verify_daemon_liveness` step runs `tctl start --json`, which
+   reaches a service-install path: the pattern (c) run of 2026-08-04 reported
+   `"detail": "installed + bootstrapped com.trusty.analyze"` (and the same for
+   search, memory and review). `verify_stack_doctor` asserts
+   `plist_installed == false` **directly** for every in-scope launchd member —
+   an assertion that holds **only because doctor runs before liveness** in all
+   three scenarios. **Reorder those two calls and the invariant fails every run**,
+   with nothing wrong: the harness would have bootstrapped the services one step
+   earlier. Left as a recorded hazard because the ordering is correct in all three
+   scenarios today and guarding a hazard no scenario exhibits would add a
+   mechanism nobody needs. **A future editor moving those calls must read this
+   first.**
+10. **The 503 branch of the amended predicate is UNEXERCISED BY ANY RUN SO FAR.**
+   Item 7's fix is what makes `trusty-analyze` safe to probe, but in the pattern
+   (c) run of 2026-08-04 `trusty-search` was already answering by the time analyze
+   was probed, so analyze returned **HTTP 200 / `status='ok'`** and the non-2xx
+   path never executed. The fix is therefore **correct-by-construction and
+   validated only in its 200 path**; `trusty-review` did exercise the
+   `status='degraded'` acceptance (at 200). Stated so nobody reads a green run as
+   evidence the 503 tolerance was observed working. Exercising it needs a run in
+   which search is slow or absent when analyze is probed.
+
+> **Items 3, 7, 8, 9 and 10 are FOLLOW-UP WORK, not a ninth phase.** The plan closed at
 > Phase 8. These were found by re-reading the shipped oracle against the product
 > after close-out, and are recorded here in the same register as everything above
 > rather than in a new phase section. **Nothing under `crates/` was changed** —
