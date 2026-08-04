@@ -318,7 +318,7 @@ negative_probe_n2() {
     #     `InstallGate::Refuse` arm) returns 3 whenever `--yes` is absent and
     #     stdin is not a TTY — and the guest exec channel is not a TTY. The
     #     cargo guard at
-    #     install.rs:826 sits inside `install_one`, which the refusal returns
+    #     install.rs:829 sits inside `install_one`, which the refusal returns
     #     before ever calling. The observed 3 is the CONSENT-GATE code, not the
     #     cargo-absent code. It is non-zero and distinct from 1, but it is not
     #     RC-2's code and recording it as such would be false precision of
@@ -350,7 +350,7 @@ negative_probe_n2() {
     log '*** N2 BLOCKED (RC-2 / DOC-2 §6.2) — NOT A PASS. ***'
     log "*** N2 observed a guide-and-abort (exit ${rc}, stdout clean, guidance on stderr) but NOT the CARGO-ABSENT one: stderr carries no cargo-related token. ***"
     log "*** first stderr line: ${first_err} ***"
-    log '*** Cause (read from crates/trusty-installer, confirmed by observation): the non-interactive consent gate returns before install_one, so the cargo guard at install.rs:826 is unreachable; and `--yes` would reach a prebuilt-first install path that could overwrite the source-built binaries under test (DOC-1 §6.5). ***'
+    log '*** Cause (read from crates/trusty-installer, confirmed by observation): the non-interactive consent gate returns before install_one, so the cargo guard at install.rs:829 is unreachable; and `--yes` would reach a prebuilt-first install path that could overwrite the source-built binaries under test (DOC-1 §6.5). ***'
     log '*** RC-2 is NOT pinned and remains OPEN. Recorded in MANIFEST Phase 5, Deviations. The harness adapts to the product, never the reverse: no crates/* source was changed. ***'
     return 0
 }

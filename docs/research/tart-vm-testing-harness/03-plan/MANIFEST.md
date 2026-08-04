@@ -171,7 +171,7 @@ green run means.** Anyone using this harness needs all six.
 2. **RC-2 — the `tctl install` cargo-absent exit code is still unpinned. OPEN on
    the product side.** The **harness** half is closed as *unreachable-by-design*:
    the non-interactive consent gate returns **3** before the guard at
-   `install.rs:826`, and `--yes` would install released binaries over the
+   `install.rs:829`, and `--yes` would install released binaries over the
    source-built ones under test. **N2 therefore reports `BLOCKED` on every run and
    is not a pass.** Pinning it needs a route that is not `tctl install` on a
    networked guest — a `crates/trusty-installer` unit test, or an offline-network
@@ -307,7 +307,7 @@ predicates nobody had run before.**
 > **(ii) DOC-2 §6.2's N2 probe cannot reach the behaviour RC-2 describes.**
 > `tctl install` with no cargo on PATH exits **3** with **no cargo-related token**:
 > the non-interactive consent gate returns before `install_one`, so the guard at
-> `install.rs:826` is unreachable — and `--yes` would be worse, reaching a
+> `install.rs:829` is unreachable — and `--yes` would be worse, reaching a
 > prebuilt-first path that could overwrite the source-built binaries under test.
 > **RC-2 is NOT pinned and remains open**; `3` is the consent-gate code, not the
 > cargo guard's. N2 is recorded **BLOCKED** using §F-7's own remedy, narrowly:
@@ -414,7 +414,7 @@ detected before. See Phase 7 Deviations items 1 and 2.
 - **RC-1 — unified daemon health envelope.** Does not exist. **Scoped around, not
   a blocker**: the oracle asserts **liveness only** for daemon health (plan P5-T7).
 - **RC-2 — `tctl install` cargo-absent exit code.** Unpinned at
-  `crates/trusty-installer/src/commands/install.rs:826`. **Pinned by plan P5-T2**;
+  `crates/trusty-installer/src/commands/install.rs:829`. **Pinned by plan P5-T2**;
   N2's predicate stays deliberately weak until then.
 - **Full base-image digest.** ~~Placeholder.~~ **CLOSED 2026-07-31 by P1-T3.**
   `sha256:a8e1c8305758643f513fdccdd829c2243687c60791083dea42f73f0b7aeb435c`,
@@ -2904,7 +2904,7 @@ detected before. See Phase 7 Deviations items 1 and 2.
 
   **N2's predicate was NOT tightened**, and P5-T2's branch that applies is the
   second one: `3` is non-zero and distinct from 1, **but it is the consent-gate
-  code, not the cargo guard's** — the guard at `install.rs:826` was never reached.
+  code, not the cargo guard's** — the guard at `install.rs:829` was never reached.
   Recording `3` as RC-2's code would be precisely the false precision DOC-2 §6.2
   refuses. **RC-2 remains OPEN.** `lib/verify.sh` carries DOC-2's weak predicate
   verbatim plus a cited comment block explaining why it stands. **No `crates/*`
@@ -3015,7 +3015,7 @@ detected before. See Phase 7 Deviations items 1 and 2.
      - `decide_install_gate`'s `InstallGate::Refuse` arm returns **3** whenever
        `--yes` is absent and stdin is not a TTY — the guest exec channel is not a
        TTY — and it returns **before `install_one` is ever called**, so the cargo
-       guard at `install.rs:826` is unreachable.
+       guard at `install.rs:829` is unreachable.
      - Adding `--yes` would be **worse, not better**: `install_one` is
        **prebuilt-tarball-first**, and the cargo guard sits in the
        `Outcome::Fallback` arm reached only when the prebuilt download *fails*. On
