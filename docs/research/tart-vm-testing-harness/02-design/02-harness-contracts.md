@@ -230,16 +230,28 @@ from both sides: members without a plist have been observed `healthy`, and a
 member with a plist has been observed `down`. In both readings health tracked the
 **probe**, never the plist.
 
-**The correct statement.** Under DOC-1 §6.5's patterns (b) and (c), **nothing
-starts the daemons.** `plans_service_bootstrap` (`install.rs:528`) is banned under
-those patterns and is the only thing in a source-based scenario that would launch
-them. A daemon that was never started answers nothing on `/health`, so the probe
-returns `NoAddress`/`Refused` and `health_string()` renders `down`. **That is the
-expected state of a correctly source-installed stack**, not a packaging defect,
-and it is why the acceptance is right. **`plist_installed == false` is a
-co-indicator of "no bootstrap ran", not the cause of `down`.** Both facts descend
-from the same upstream cause — the banned bootstrap step — and neither causes the
-other.
+**The correct statement.** Under DOC-1 §6.5's patterns (b) and (c), **nothing has
+started the daemons at the point the oracle reads `doctor`.**
+`plans_service_bootstrap` (`install.rs:528`) is banned under those patterns, so
+the install path starts nothing. A daemon that was never started answers nothing
+on `/health`, so the probe returns `NoAddress`/`Refused` and `health_string()`
+renders `down`. **That is the expected state of a correctly source-installed
+stack**, not a packaging defect, and it is why the acceptance is right.
+**`plist_installed == false` is a co-indicator of "no bootstrap ran", not the
+cause of `down`.** Both facts descend from the same upstream cause — the banned
+bootstrap step — and neither causes the other.
+
+> **The ordering qualifier is load-bearing; do not drop it.** It is *not* true
+> that nothing in a pattern-(c) scenario ever starts the daemons — the harness's
+> own `verify_daemon_liveness` step runs an explicit `tctl start --json` (§1.3),
+> after which the very same members answer `/health` with HTTP 200. What is true
+> is that this happens **after** `verify_stack_doctor` has read and asserted the
+> report. Observed in the Phase 5 pattern (c) run of 2026-08-03: `trusty-search`,
+> `trusty-memory`, `trusty-analyze` and `trusty-review` were reported
+> `health=down, plist=false` by `doctor`, and the same four were then reported
+> **LIVE — HTTP 200** by `verify_daemon_liveness` a few steps later in the same
+> run. That transition is this correction's mechanism demonstrated end to end:
+> **what changes `health` is the start, not a plist.**
 
 **Consequence 1 — the fail-closed branch this bullet promises is INERT under the
 very patterns it is gated to.** The original text justified requiring
