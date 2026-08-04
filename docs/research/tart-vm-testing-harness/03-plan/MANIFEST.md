@@ -112,7 +112,7 @@ not been completed is not complete, regardless of what its code does.
 | **P2** — Host-side skeleton | `complete` | 2026-08-01 | `eee03178` |
 | **P3** — Guest bring-up | `complete` | 2026-08-02 | `345e5b12`, `f181a44e`, + the 2026-08-02 defect-fix commits |
 | **P4** — Expectation table and `--check-table` | `complete` | 2026-08-02 | `0c25d48f`, `12a87f28` |
-| **P5** — Pattern (c) complete: installs, N2, oracle | `blocked` | 2026-08-02 | `298a02c7`, `462f6d5c` |
+| **P5** — Pattern (c) complete: installs, N2, oracle | `complete` | 2026-08-03 | `298a02c7`, `462f6d5c`, `2bf453bc` |
 | **P6** — Pattern (b): branch | `not-started` | — | — |
 | **P7** — Pattern (a): released | `not-started` | — | — |
 | **P8** — Hardening, docs, measurement write-back | `not-started` | — | — |
@@ -147,12 +147,22 @@ eight package-granular `cargo install --path` commands**, lands **all thirteen
 in-scope binaries**, and passes **all four Single-Install Convention gates** —
 including the three-sidecar `trusty-memory` case that DOC-1's original seed table
 had omitted. Measurement K5 reproduced: `trusty-git-analytics` resolves rustc
-**1.97.1** against the workspace's **1.91.1**. **The first real full-stack wall
-clock is 722 s and 919 s across two runs (12–15 min), which SUPERSEDES DOC-1 §9's
-4–8 minute extrapolation** — the measured value is 1.5×–3.8× that upper bound, and
+**1.97.1** against the workspace's **1.91.1**. **The real full-stack wall clock is
+656 s, 722 s and 919 s across three runs (11–15 min), which SUPERSEDES DOC-1 §9's
+4–8 minute extrapolation** — the measured value is 1.4×–3.8× that upper bound, and
 `install_timeout` is tightened 2700 → 1800 s on it.
 
-**Two contract defects stop the checkpoint, and both were found by executing
+> **PHASE 5 IS NOW `complete`, 2026-08-03.** The paragraphs below describe the
+> `blocked` state as it stood on 2026-08-02 and are **retained** per this file's
+> record-reversals rule. Both blocking contract defects were resolved — DOC-2
+> §1.1a scopes the `stack doctor` predicate (and its own two mis-stated causes
+> were corrected on 2026-08-03), and §6.2 closes RC-2 as
+> *unreachable-by-design*. **Run C re-ran the checkpoint and exited 0 with all six
+> clauses satisfied**, in 656 s — the fastest of the three runs *and* the only one
+> to complete the entire oracle. **Nothing was weakened to get there.** RC-2 stays
+> **OPEN** as a product-side item.
+
+**Two contract defects stopped the checkpoint, and both were found by executing
 predicates nobody had run before.**
 
 > **(i) DOC-2 §1.1's `stack doctor` predicate is UNSATISFIABLE for a
@@ -2367,7 +2377,18 @@ Phase 6 does not start around it.
 
 ## Phase 5 — Pattern (c) complete: install steps, N2, and the full oracle
 
-- **State:** `blocked`
+- **State:** `complete`
+
+  > **UPDATED 2026-08-03 — `blocked` → `complete`.** The checkpoint was re-run
+  > after DOC-2 §1.1a's scoping and §6.2's RC-2 closure, and **run C exited 0 with
+  > all six clauses satisfied**. The two conditions the previous `blocked` value
+  > named as needed to unblock were both supplied: the owner decision on DOC-2 §1.1
+  > (delivered as §1.1a, whose two mis-stated causes were themselves corrected on
+  > 2026-08-03), and RC-2's disposition (closed *unreachable-by-design*, §6.2).
+  > **Nothing was weakened to reach the green**: all 13 binaries are still asserted
+  > present, all 4 Single-Install gates still run, and `on_path`/`version` are still
+  > asserted for every member `doctor` reports. RC-2 itself remains **OPEN** as a
+  > product-side item. The `blocked` note below is retained, not deleted.
 
   > **CORRECTED 2026-08-03 — this field read `not-started` while P5-T1…P5-T9 were
   > complete, two full-stack VM runs had been performed and this section's
@@ -2410,7 +2431,60 @@ Phase 6 does not start around it.
   as amended 2026-08-03, an N2 recorded `BLOCKED` SATISFIES THIS CLAUSE**;
   (vi) a total wall clock, logged, which is recorded here as the **first full-stack
   measurement**.
-- **Observed result:** **PASS CONDITION NOT MET.** Clause (iii) failed and is
+- **Observed result:** **PASS CONDITION MET — all six clauses, run C.**
+
+  **Run C, 2026-08-03 UTC, tree `2bf453bc`. `vmtest run local` exited 0**, VM
+  `vmtest-20260803T234712Z-18149`, **total wall clock 656 s**. Every clause is
+  evidenced below under "Run C". The two runs that preceded it are **retained in
+  full**, per this file's record-reversals rule.
+
+  | clause | run A | run B | **run C** |
+  |---|---|---|---|
+  | (i) 8 installs, none twice, each with in-directory `rustc` | PASS | PASS | **PASS** |
+  | (ii) `verify_binaries` 13/13 | PASS | PASS | **PASS** |
+  | (iii) `stack doctor` predicate | **FAIL** | **FAIL** | **PASS** |
+  | (iv) 4 × `verify_single_install` | PASS | PASS | **PASS** |
+  | (v) N2 recorded (BLOCKED satisfies, §6.2) | BLOCKED | BLOCKED | **BLOCKED — satisfies** |
+  | (vi) total wall clock logged | PASS | PASS | **PASS** |
+  | `vmtest run local` exit code | 60 | 60 | **0** |
+
+  **Run C, clause (iii) — the clause that had never passed.** `verify_stack_doctor`
+  applied §1.1a's predicate to the **5** in-scope packages `doctor` reports, and
+  named the 3 it does not:
+  ```
+  vmtest: stack doctor verdict: degraded   [LOGGED, NOT ASSERTED — §1.1]
+  vmtest:   trusty-search: health='down' accepted (plist_installed=false; H_c = {healthy,stale,down})
+  vmtest:   trusty-memory: health='down' accepted (plist_installed=false; H_c = {healthy,stale,down})
+  vmtest:   trusty-analyze: health='down' accepted (plist_installed=false; H_c = {healthy,stale,down})
+  vmtest:   trusty-mpm: health='unknown' accepted (plist_installed=null; H_c = {healthy,stale,unknown})
+  vmtest:   trusty-review: health='down' accepted (plist_installed=false; H_c = {healthy,stale,down})
+  vmtest: in-scope package(s) `stack doctor` does not report as members: trusty-code trusty-installer tga  [NO HEALTH OBLIGATION — DOC-2 §1.1a(a)]
+  vmtest: stack doctor reports member(s) the expectation table does not carry: trusty-console  [LOGGED, NOT ASSERTED — plan §F-10(e)]
+  vmtest: verify_stack_doctor PASS: all 5 in-scope package(s) reported by doctor satisfy §1.1a's predicate under pattern c (verdict 'degraded' logged but not asserted)
+  ```
+
+  **Run C — the two oracle functions runs A and B never reached both PASSED.**
+  §12.4's write-once `die` had ended both earlier runs at clause (iii):
+  ```
+  vmtest: verify_versions PASS: tool_version='0.5.0', stack_version='0.0.0-scaffold' (stub value, field asserted only), contract_floor <= contract_target
+  vmtest: verify_daemon_liveness PASS: 4 in-scope daemon(s) live (HTTP 200 + parseable JSON + acceptable .status). LIVENESS ONLY — see RC-1.
+  ```
+
+  **Run C — §1.1a(c)'s corrected mechanism, demonstrated end to end.** The same
+  four launchd members that `doctor` reported `health=down, plist=false` answered
+  HTTP 200 a few steps later, once `verify_daemon_liveness` ran an explicit
+  `tctl start --json`. **What moves `health` is the start, not a plist** — which is
+  precisely the causal claim §1.1a(c) was corrected to state on 2026-08-03:
+  ```
+  vmtest:   trusty-search: LIVE — HTTP 200, JSON parses, .status='ok'
+  vmtest:   trusty-memory: LIVE — HTTP 200, JSON parses, .status='ok'
+  vmtest:   trusty-mpm: LIVE — HTTP 200, JSON parses, .status='ok'
+  vmtest:   trusty-review: LIVE — HTTP 200, JSON parses, .status='degraded'
+  ```
+
+  ---
+
+  **RUNS A AND B — RETAINED. PASS CONDITION NOT MET.** Clause (iii) failed and was
   **unsatisfiable as written**; clauses (i), (ii), (iv) and (vi) passed; clause (v)
   was recorded and is **BLOCKED**. Two full-stack runs, 2026-08-02 UTC — run A on
   tree `298a02c7`, run B on tree `462f6d5c` (run B adds read-only snapshot
@@ -2510,13 +2584,15 @@ Phase 6 does not start around it.
   ```
   run A: vmtest: MEASURE run_wall_clock_s 722 (exit 60; excludes teardown) — DOC-1 §9's replacement measurement
   run B: vmtest: MEASURE run_wall_clock_s 919 (exit 60; excludes teardown) — DOC-1 §9's replacement measurement
+  run C: vmtest: MEASURE run_wall_clock_s 656 (exit 0; excludes teardown) — DOC-1 §9's replacement measurement
   ```
 
-  **`verify_versions` and `verify_daemon_liveness` DID NOT EXECUTE.** §12.4's
-  write-once `die` ends the run at the first classified failure, and clause (iii)
-  fired before them. Their raw inputs were captured by the diagnostics snapshot
-  (Deviations item 5) and are recorded under Measurements; **no verdict is claimed
-  for either function.**
+  **`verify_versions` and `verify_daemon_liveness` DID NOT EXECUTE IN RUNS A AND
+  B.** §12.4's write-once `die` ends the run at the first classified failure, and
+  clause (iii) fired before them. Their raw inputs were captured by the diagnostics
+  snapshot (Deviations item 5) and are recorded under Measurements; **no verdict is
+  claimed for either function on those two runs.** *(Superseded for run C, which
+  reached both and passed both — see the run C block above.)*
 
   **Host cleanliness — before and after, raw.** No `vmtest-*` VM survived any of
   the three runs this phase performed.
@@ -2535,6 +2611,32 @@ Phase 6 does not start around it.
   ```
   Teardown on every path, including both exit-60 runs and the exit-50 run:
   `vmtest: teardown: deleted vmtest-20260802T190434Z-67389`.
+
+  **Run C — host cleanliness, before and after, raw (2026-08-03).** No `vmtest-*`
+  survived either of the two runs performed that day.
+  ```
+  $ tart list                                    # before
+  Source Name                                                                                                        Disk Size Accessed       State
+  local  tahoe-base                                                                                                  50   33   1 hour ago     stopped
+  OCI    ghcr.io/cirruslabs/macos-tahoe-base:latest                                                                  50   32   2 weeks ago    stopped
+  OCI    ghcr.io/cirruslabs/macos-tahoe-base@sha256:a8e1c8305758643f513fdccdd829c2243687c60791083dea42f73f0b7aeb435c 50   32   2 weeks ago    stopped
+
+  $ tart list                                    # after
+  Source Name                                                                                                        Disk Size Accessed       State
+  local  tahoe-base                                                                                                  50   33   3 minutes ago  stopped
+  OCI    ghcr.io/cirruslabs/macos-tahoe-base:latest                                                                  50   32   2 weeks ago    stopped
+  OCI    ghcr.io/cirruslabs/macos-tahoe-base@sha256:a8e1c8305758643f513fdccdd829c2243687c60791083dea42f73f0b7aeb435c 50   32   2 weeks ago    stopped
+  ```
+  `vmtest: teardown: deleted vmtest-20260803T234712Z-18149`.
+
+  **A run whose log was lost is recorded rather than omitted.** An earlier
+  2026-08-03 invocation also exited 0 and tore its VM down cleanly, but its
+  **stderr was not captured** (the harness logs to stderr and prunes its run
+  registry on success), so it produced an exit code and no per-clause evidence.
+  It is **not** counted as a measurement and its wall clock is unknown; run C is
+  the re-run performed specifically to capture the log. Recorded because an
+  unlogged green is not evidence, and omitting it would misstate how many VMs the
+  host carried that day.
 - **Files delivered:** modify `vmtest-harness/vmtest`; modify
   `vmtest-harness/lib/source.sh`; modify `vmtest-harness/lib/verify.sh`; modify
   `vmtest-harness/scenarios/install-local.sh`; modify
@@ -2543,43 +2645,60 @@ Phase 6 does not start around it.
 - **Measurements:**
 
   **1. THE FIRST FULL-STACK WALL CLOCK — this SUPERSEDES DOC-1 §9's 4–8 minute
-  extrapolation.** Two runs, 8 crates, 13 binaries, 8 vCPU / 16 GiB, shared
+  extrapolation.** Three runs, 8 crates, 13 binaries, 8 vCPU / 16 GiB, shared
   `CARGO_TARGET_DIR`, `SKIP_UI_BUILD=1`:
 
-  | | run A (`298a02c7`) | run B (`462f6d5c`) |
-  |---|---|---|
-  | boot → ready | 12 s | 34 s |
-  | provisioning | 64 s | 137 s |
-  | source stream | 97,126,400 B / 5,345 files in 4 s | same, 4 s |
-  | **install phase (8 crates)** | **588 s** | **614 s** |
-  | scenario (install + probes + oracle) | ~640 s | ~748 s |
-  | **TOTAL run wall clock** | **722 s (12 min 02 s)** | **919 s (15 min 19 s)** |
+  | | run A (`298a02c7`) | run B (`462f6d5c`) | **run C (`2bf453bc`)** |
+  |---|---|---|---|
+  | boot → ready | 12 s | 34 s | **17 s** |
+  | provisioning | 64 s | 137 s | **17 s** |
+  | source stream | 97,126,400 B / 5,345 files in 4 s | same, 4 s | 97,198,080 B / 5,346 files in **4 s** |
+  | **install phase (8 crates)** | **588 s** | **614 s** | **562 s** |
+  | scenario (install + probes + oracle) | ~640 s | ~748 s | **~610 s** |
+  | oracle reached | through clause (iii) | through clause (iii) | **complete** |
+  | **TOTAL run wall clock** | **722 s (12 min 02 s)** | **919 s (15 min 19 s)** | **656 s (10 min 56 s)** |
 
   DOC-1 §9 extrapolated **4–8 minutes** and labelled it low-confidence, computed
   for **six** crates against what is now an **eight**-crate scope. The measured
-  total is **1.5×–3.8× that upper bound.** Per P5-T8 this is not a refutation of
-  the estimate — **it replaces it.** Note both runs reached the same oracle
-  failure, so these totals include the full install and the first four
-  verifications but **not** `verify_versions` or `verify_daemon_liveness`; a run
-  that completed the oracle would be marginally longer.
+  totals are **1.4×–3.8× that upper bound.** Per P5-T8 this is not a refutation of
+  the estimate — **it replaces it.** Runs A and B reached the same oracle failure,
+  so their totals include the full install and the first four verifications but
+  **not** `verify_versions` or `verify_daemon_liveness`; **run C completed the
+  entire oracle and is still the fastest of the three**, so the earlier totals are
+  not short for want of the missing steps — the spread is host variance in the
+  install phase, not oracle cost.
+
+  **What the three readings say about the 45-minute watchdog.** Observed range
+  **656–919 s**, mean **766 s**, spread **±17 %** about that mean. The watchdog
+  (`2700 s`) sits at **2.9× the slowest observed run** and **4.1× the fastest**.
+  The dominant term is the install phase (**562–614 s**, i.e. **83–86 %** of each
+  total), which is the term most exposed to host load; boot and provisioning
+  together never exceed 171 s. For the watchdog to fire, the install phase would
+  have to slow by roughly **3.4×** against the slowest run seen so far. **The
+  margin is comfortable and is now grounded in three measurements rather than
+  two** — but all three are from one host, so this bounds variance *on this
+  machine*, not across hosts. P8-T2 should not narrow the watchdog on this
+  evidence alone.
 
   **2. Per-crate install times** (`MEASURE install_s`), TSV row order:
 
-  | crate_dir | run A | run B |
-  |---|---|---|
-  | trusty-search | 117 s | 146 s |
-  | trusty-memory | 78 s | 92 s |
-  | trusty-analyze | 67 s | 66 s |
-  | trusty-code | 64 s | 55 s |
-  | trusty-installer | 21 s | 22 s |
-  | trusty-git-analytics | 62 s | 55 s |
-  | trusty-mpm | 121 s | 124 s |
-  | trusty-review | 58 s | 54 s |
-  | **total** | **588 s** | **614 s** |
+  | crate_dir | run A | run B | **run C** |
+  |---|---|---|---|
+  | trusty-search | 117 s | 146 s | **91 s** |
+  | trusty-memory | 78 s | 92 s | **80 s** |
+  | trusty-analyze | 67 s | 66 s | **59 s** |
+  | trusty-code | 64 s | 55 s | **49 s** |
+  | trusty-installer | 21 s | 22 s | **22 s** |
+  | trusty-git-analytics | 62 s | 55 s | **64 s** |
+  | trusty-mpm | 121 s | 124 s | **138 s** |
+  | trusty-review | 58 s | 54 s | **59 s** |
+  | **total** | **588 s** | **614 s** | **562 s** |
 
-  `trusty-search` at 117/146 s brackets the research's 103–112 s. The largest
-  single-crate install observed is **146 s**, so §10.2's built-in 900 s
-  single-crate budget is **~6.2×** measured — grounded, and left unchanged.
+  `trusty-search` at 117/146/91 s brackets the research's 103–112 s. The largest
+  single-crate install observed across the three runs is **146 s**, so §10.2's
+  built-in 900 s single-crate budget is **~6.2×** measured — grounded, and left
+  unchanged. Run C's slowest crate is `trusty-mpm` at **138 s**, the only crate
+  whose time rose across all three runs; nothing in the budget turns on it.
 
   **3. RC-2 — the observed `tctl install` cargo-absent exit code.** **The code is
   `3`, and it is NOT the cargo-absent code.** Observed twice, identically:
