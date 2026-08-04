@@ -237,8 +237,11 @@ source_deliver_branch() {
     log "resolved commit SHA: ${sha}"
     log "guest working tree at ${guest_dir}: ${files} files (excluding .git)"
     log 'THE HOST REPOSITORY WAS NOT READ: pattern (b) has no host path argument and no host->guest transfer (DOC-1 §6.2).'
-
-    printf '%s\n' "$sha"
+    # #16: NO stdout emit. DOC-2 §12.2 declares this function "0 or dies 50"
+    # with no emit; the `printf '%s\n' "$sha"` that used to close it was an
+    # undeclared value channel whose only consumer rebuilt a log line this
+    # function already logs one line above — so ten `die 50` calls ran inside
+    # `_sha=$(source_deliver_branch …)`'s subshell and classified nothing.
 }
 
 # --- pattern (a): the registry (DOC-1 §6.3, D1) ----------------------------
@@ -373,7 +376,14 @@ install_from_path() {
         expected="$workspace_rustc"
     fi
 
-    rustc_line=$(verify_rustc "$vm" "$crate_path" "$expected")
+    # #16: a PLAIN call. As `rustc_line=$(verify_rustc …)` all three of the
+    # function's `die 50` calls ran inside the substitution's subshell: the run
+    # aborted (the assignment takes the substitution's status) but VMTEST_EXIT
+    # was written in a child and lost, so the MEASURE line reported `exit 0` and
+    # a later teardown `die 70` could claim the slot §2 reserves for the first
+    # classified failure. The resolved line comes back in RUSTC_LAST_LINE.
+    verify_rustc "$vm" "$crate_path" "$expected"
+    rustc_line="$RUSTC_LAST_LINE"
 
     if [ -z "$expected" ]; then
         case "$rustc_line" in
@@ -605,9 +615,17 @@ install_from_registry() {
 #      only ever see the loop it wrote. The canonical `vmtest: install_from_path
 #      <dir>` line is still emitted on stderr for the human and for the
 #      checkpoint's clause (i).
+#      THE ACCESSOR IS INVOKED THROUGH A STRING PARAMETER, and that is the one
+#      place issue #16's static guard (`tests/check-no-swallowed-die.sh`) cannot
+#      see: no grep for a function NAME finds `"$accessor"`. The three defects
+#      it hid — a `$( … | wc -l)` and two `<( … | sort)` operands, all three
+#      running `tsv_scope_*`'s `die 60` in a fork — were found by reading. They
+#      are fixed here by passing the accessor an out_path, which is also what
+#      makes the indirection safe by construction rather than by vigilance: the
+#      call is now a plain command whose failure `set -e` catches.
 install_assert_install_count() {
     local accessor="${1:-tsv_scope_crate_dirs}"
-    local ledger unit expected actual dups missing extra
+    local ledger unit expected actual dups missing extra scope
 
     ledger="$VMTEST_RUNDIR/installs.log"
     case "$accessor" in
@@ -618,7 +636,15 @@ install_assert_install_count() {
     [ -f "$ledger" ] \
         || die 60 "the install ledger ${ledger} does not exist — no install step ever ran, so the scenario installed nothing at all"
 
-    expected=$("$accessor" | wc -l | tr -d ' ')
+    # #16: out_path, so the accessor's `die 60` runs HERE and not in a fork.
+    scope="$VMTEST_TMPDIR/install-scope-${accessor}.txt"
+    # swallowed-die-check: indirect — `$accessor` is one of the two
+    # `tsv_scope_*` out-path accessors (the `case` above enumerates them), and
+    # this is a PLAIN command: no substitution, so a `die` inside it unwinds
+    # this shell and `set -e` catches a non-zero return.
+    "$accessor" "$scope"
+
+    expected=$(wc -l < "$scope" | tr -d ' ')
     actual=$(grep -c . "$ledger" | tr -d ' ')
     [ "$actual" = "$expected" ] \
         || die 60 "install ran ${actual} times, expected ${expected} (one per ${unit}, from \`${accessor}\`). Thirteen in-scope ROWS resolve to ${expected} distinct values (§F-3); a count equal to the row count means the loop is iterating rows or binaries instead."
@@ -631,8 +657,10 @@ install_assert_install_count() {
     # SET equality, not just count. Under pattern (a) both accessors emit eight
     # values, so a count-only check cannot tell `tga` from
     # `trusty-git-analytics` — the one discontinuity DOC-1 D3 names.
-    missing=$(comm -23 <("$accessor" | sort) <(sort "$ledger") | tr '\n' ' ')
-    extra=$(comm -13 <("$accessor" | sort) <(sort "$ledger") | tr '\n' ' ')
+    # #16: both operands are now plain files. `sort` is not die-capable, so
+    # these two process substitutions carry no classification to lose.
+    missing=$(comm -23 <(sort "$scope") <(sort "$ledger") | tr '\n' ' ')
+    extra=$(comm -13 <(sort "$scope") <(sort "$ledger") | tr '\n' ' ')
     if [ -n "${missing# }" ] || [ -n "${extra# }" ]; then
         die 60 "the installed set is not \`${accessor}\`'s set. NOT INSTALLED: ${missing:-<none>} / INSTALLED BUT NOT IN SCOPE: ${extra:-<none>}. Under pattern (a) the key is the PACKAGE name \`cargo install\` takes, not the directory: crates/trusty-git-analytics publishes as \`tga\` (DOC-2 §9.2, DOC-1 D3)."
     fi
